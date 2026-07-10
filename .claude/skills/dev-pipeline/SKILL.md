@@ -116,7 +116,7 @@ with a requirement-by-requirement trace.
 ## Check commands (Windows venv)
 
 ```
-.venv/Scripts/python.exe -m mypy template_repo
+.venv/Scripts/python.exe -m mypy energydata
 .venv/Scripts/python.exe -m ruff check .
 .venv/Scripts/python.exe -m pytest
 ```

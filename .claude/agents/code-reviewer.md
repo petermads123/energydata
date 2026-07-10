@@ -41,7 +41,7 @@ Run the static checks yourself and read the output (don't just trust the coders)
 
 ```
 .venv/Scripts/python.exe -m ruff check .
-.venv/Scripts/python.exe -m mypy template_repo
+.venv/Scripts/python.exe -m mypy energydata
 ```
 
 ## Output

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "template_repo"
+name = "energydata"
 version = "0.1.0"
-description = "template_repo"
+description = "Collection of Danish energy data (prices, consumption, ...) via the Energi Data Service and Eloverblik APIs."
 authors = [
   { name = "Peter Mads Pedersen", email = "petermads123@hotmail.com" }
 ]
@@ -13,7 +13,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 
 # Runtime dependencies
-dependencies = []
+dependencies = [
+  "requests",
+]
 
 # Optional groups (e.g. dev dependencies)
 [project.optional-dependencies]

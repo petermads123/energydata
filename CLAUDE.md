@@ -4,12 +4,12 @@ Guidance for Claude Code when working in this repository.
 
 ## What this project is
 
-`energydata` is a Python (≥ 3.13) package for working with energy data. The
-package is installed with `pip install -e .` and consumed via its package import.
-
-> **Note:** the package folder is currently still named `template_repo` (the
-> repo template has not been renamed yet). Commands below reference that folder;
-> update them when the package is renamed.
+`energydata` is a Python (≥ 3.13) package for collecting Danish energy data —
+including, but not limited to, energy prices and energy consumption — from the
+**Energi Data Service** API (open Energinet data: spot prices, tariffs, …) and
+the **Eloverblik** API (personal metering-point data; token-authenticated). The
+package is installed with `pip install -e .` and consumed via
+`import energydata`.
 
 ## ⚙️ Coding workflow — ALWAYS use the multi-agent dev pipeline
 
@@ -68,7 +68,7 @@ enforced in the review step and verified in the test step.
 ## ✅ Check commands (Windows, project venv)
 
 ```powershell
-.venv/Scripts/python.exe -m mypy template_repo    # type check — must be clean
+.venv/Scripts/python.exe -m mypy energydata       # type check — must be clean
 .venv/Scripts/python.exe -m ruff check .          # lint — must pass
 .venv/Scripts/python.exe -m pytest                # tests — must be green
 ```
@@ -79,5 +79,5 @@ from the `D` and `ANN` ruff rules via `per-file-ignores`.
 ## Conventions
 
 - Math-style names (`Kp`, `Ki`, `dt`) are allowed (`N803`/`N806` ignored).
-- New modules go in their own subpackage under the package folder and are
-  re-exported from the package's `__init__.py`.
+- New modules go in their own subpackage under `energydata/` and are
+  re-exported from `energydata/__init__.py`.

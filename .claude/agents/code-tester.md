@@ -37,7 +37,7 @@ and `pytest.approx` for floats. Tests are exempt from `D`/`ANN` ruff rules via
 Run all three and capture real output:
 
 ```
-.venv/Scripts/python.exe -m mypy template_repo          # 100% type-clean required
+.venv/Scripts/python.exe -m mypy energydata             # 100% type-clean required
 .venv/Scripts/python.exe -m ruff check .                # lint must pass
 .venv/Scripts/python.exe -m pytest                       # all tests green
 ```
