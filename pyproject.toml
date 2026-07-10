@@ -15,6 +15,7 @@ requires-python = ">=3.13"
 # Runtime dependencies
 dependencies = [
   "requests",
+  "pandas",
 ]
 
 # Optional groups (e.g. dev dependencies)
@@ -23,6 +24,8 @@ dev = [
   "pytest",
   "ruff",
   "pydocstyle",
+  "mypy",
+  "pandas-stubs",
 ]
 
 [tool.setuptools.packages.find]
