@@ -1,6 +1,6 @@
 # Shared HTTP utilities
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -295,6 +295,12 @@ Built as planned, with these small departures (signatures in the Public API tabl
 - A `Retry-After` of hundreds of digits parses to `inf` and so raises `HoldoffTooLongError`.
 - `read_response` passes `response.charset_encoding` to `read_csv` also when `fmt="csv"` is
   given explicitly.
+- Step 5 fixes (signatures unchanged; see section 5 for the findings): `RetryPolicy` also
+  rejects non-finite `base_delay`, `max_delay` and `max_holdoff`; `date_windows` compares
+  `start`/`end` as UTC instants; `read_response` maps a `utf-8` charset to `utf-8-sig` for
+  CSV; `read_xml` also catches `LookupError`; `read_csv` parses with `strict=True` and
+  rejects a delimiter that is not one character with `ParseError`; `read_zip` catches
+  `ValueError`, `struct.error` and the other errors a damaged archive can raise.
 - `STRUCTURE.md` names the utils modules and tests in prose; the signature tables are in
   `.claude/rules/structure-utils.md`.
 
@@ -326,10 +332,62 @@ Built as planned, with these small departures (signatures in the Public API tabl
 
 > Written in step 5: the dynamic half.
 
-| Intent | Test names | Result |
+Designer reports: `input-space` and `contract`, both merged. Full suite after this step:
+803 passed (311 existing + 492 new: 297 retry, 152 readers, 43 chunking); `ruff check`,
+`ruff format --check`, `mypy` clean; the three `python -m energydata.utils.<module>`
+showcases exit 0.
+
+| Intent | Test names (in `tests/test_retry.py` unless noted) | Result |
 |---|---|---|
+| T1 | `test_each_retried_status_is_retried_then_the_success_is_returned`, `test_each_retried_exception_is_retried_then_the_success_is_returned`, `test_a_2xx_status_is_returned_on_the_first_attempt`, `test_retry_constants_name_the_documented_sets` | pass |
+| T2 | `test_other_error_statuses_raise_after_one_request` (incl. 408, 425, 499, 501, 505), `test_a_redirect_not_followed_by_the_client_raises_after_one_request`, `test_an_exception_outside_the_retry_set_propagates_after_one_request` | pass |
+| T3 | `test_backoff_delay_*` (floor doubling and saturation, bounds, huge retry, zero base, retry < 1, seeded rng, default rng), `test_the_wrappers_sleep_the_backoff_delays`, `test_transport_errors_are_slept_with_backoff_not_a_holdoff_reader` | pass |
+| T4 | `test_retry_policy_rejects_invalid_settings_and_names_the_value`, `test_retry_policy_accepts_the_boundary_values`, `test_retry_policy_defaults_match_the_documented_ones`, `test_retry_policy_is_frozen` | pass |
+| T5 | `test_retry_after_seconds_*` (numbers, unusable values, three HTTP date forms, `-0000`, past date, other-zone `now`, naive `now`, huge digits, duplicate header), `test_the_retry_after_header_replaces_the_computed_delay`, `test_a_holdoff_is_not_capped_by_max_delay`, `test_a_retry_after_date_is_waited_for_with_the_current_clock`, `test_a_past_retry_after_date_sleeps_zero_not_the_backoff`, `test_an_unusable_retry_after_falls_back_to_the_backoff`, `test_a_holdoff_reader_overrides_the_header_and_bad_values_fall_back`, `test_a_holdoff_reader_can_read_the_body` | pass |
+| T6 | `test_a_holdoff_over_the_cap_raises_without_sleeping_or_retrying`, `test_a_holdoff_equal_to_the_cap_is_slept`, `test_a_holdoff_just_over_the_cap_raises`, `test_a_holdoff_of_hundreds_of_digits_raises_as_too_long`, `test_a_reader_holdoff_over_the_cap_raises`, `test_a_zero_cap_still_allows_a_zero_holdoff`, `test_the_last_attempt_is_exhaustion_not_a_holdoff_error`, `test_a_too_long_holdoff_before_the_last_attempt_raises_on_that_attempt` | pass |
+| T7 | `test_exhausted_by_status_sets_the_response_and_not_the_exception`, `test_exhausted_by_a_transport_error_sets_and_chains_the_exception`, `test_exhaustion_reports_the_last_outcome_when_the_kinds_alternate`, `test_a_single_attempt_policy_*`, `test_success_on_the_last_allowed_attempt_is_returned`, `test_both_errors_share_a_base_and_are_not_httpx_errors` | pass |
+| T8 | every scenario above is parametrised over `sync`/`async` (`KINDS`); `test_sync_and_async_wrappers_behave_identically` (10 scenarios compared on result, error, attempts, requests and sleeps), `test_the_async_wrapper_does_not_block_the_event_loop_while_waiting`, `test_the_async_wrapper_awaits_the_sleep_it_is_given` | pass |
+| T9 | `test_a_created_client_is_closed_*` (success, every way out, reader raising, sleep interrupted, async cancellation), `test_a_created_client_follows_redirects`, `..._uses_the_default_timeout`, `..._receives_a_per_request_timeout`, `test_a_passed_client_is_left_open_on_every_exit` (sync and async), `test_every_attempt_resends_the_same_request`, `test_raw_content_reaches_the_request`, `test_a_per_request_timeout_is_forwarded_even_when_zero`, `test_the_showcase_runs` | pass |
+| T10 | `tests/test_readers.py`: `test_read_json_*`, `test_read_xml_*`, `test_read_csv_*` (BOM, `;`/tab, one column, ragged rows, duplicate headers, charset, truncated quote, delimiter, size limit), `test_read_zip_*` (nested, directories, unknown extension, corrupt member, damaged-archive sweep) | pass |
+| T11 | `tests/test_readers.py`: `test_format_from_content_type_*`, `test_format_from_filename_*`, `test_read_bytes_*`, `test_read_response_*` | pass |
+| T12 | `tests/test_chunking.py`: `test_date_windows_*` (coverage and contiguity, exact multiple, span longer, DST autumn and spring, mixed zones, repeated hour, invalid input) | pass |
+| T13 | `tests/test_chunking.py`: `test_fetch_chunked_*` (sync and async via `RUNNERS`), `test_async_fetch_chunked_never_overlaps_windows`, `test_async_fetch_chunked_validation_error_surfaces_on_await` | pass |
+| T14 | autouse `_no_network` in `tests/test_retry.py` plus `test_the_no_network_guard_refuses_a_real_transport`; `tests/test_readers.py::test_httpx_is_the_only_runtime_dependency` | pass |
+
+### Findings the designers called contradictions, and what was decided
+
+Each was run before anything was changed. All fixes stay inside section 1's criteria; no case needed a halt.
+
+| Finding | Verified by running | Decision |
+|---|---|---|
+| `date_windows` compared `start >= end` by wall clock, so a range inside the repeated autumn hour was refused when forward and returned `[]` when backward | yes: `[]` for backward, `ValueError` for forward | **Bug, fixed** (A7: `start >= end` raises, windows cover exactly `[start, end)`): compared as UTC instants. Tests: `test_date_windows_accept_a_forward_range_inside_the_repeated_hour`, `..._reject_a_backward_range_...`, and the fetchers' no-call case |
+| `read_response` kept a BOM with `charset=utf-8` | yes: key `'\ufeffa'` | **Bug, fixed** (A6: the same bytes parse the same through `read_csv` and `read_response`): `utf-8`/`utf8` charsets are read as `utf-8-sig` |
+| `read_xml` let `LookupError` escape for an unknown declared encoding | yes | **Bug, fixed** (A6: a malformed body raises an error naming the format): `LookupError` caught as `ParseError("xml")` |
+| `read_csv` accepted a truncated quoted field | yes: `[{"a": "1", "b": "2"}]` | **Bug, fixed** (A6; T10 lists truncated input): `csv.reader(strict=True)` |
+| `read_csv` raised `TypeError` for a delimiter that is not one character | yes | **Bug, fixed**: `ParseError("csv")` naming the delimiter. A6 covers malformed input; the delimiter was never a decided public case, but a raw `TypeError` contradicts the function's `Raises:` and the fix adds no behaviour |
+| `read_zip` let `ValueError` and `NotImplementedError` escape (damaged archives; found by a byte-flip sweep) | yes: `ValueError: negative seek value`, `NotImplementedError: zip file version 23.5` | **Bug, fixed** (A6): one `_ZIP_ERRORS` tuple (adds `ValueError`, `struct.error`) used for opening and reading. The sweep over every truncation and byte flip is a test |
+| `RetryPolicy` accepted infinite delays and holdoffs, so `time.sleep(inf)` raised `OverflowError` and `asyncio.sleep(inf)` hung | yes: `backoff_delay` returned `inf` | **Bug, fixed**: non-finite `base_delay`, `max_delay` and `max_holdoff` rejected with `ValueError` naming the value. Does not touch A1-A5: the settings stay configurable over every finite value. A user wanting "no cap" passes a large number |
+| `ProxyError` is not retried although A1 says "connection errors" | n/a (reading) | **Recorded, not changed.** `RETRY_EXCEPTIONS` is the plan's explicit tuple and adding to it changes what is retried, which section 2's Risks name as a halt trigger; pinned by `test_an_exception_outside_the_retry_set_propagates_after_one_request` (includes `ProxyError`). Candidate for `DEVELOPMENT.md` at step 8 |
+| `read_json` accepts `NaN`/`Infinity` | yes | **Recorded, not changed**: stdlib leniency, not covered by section 1; pinned by `test_read_json_accepts_nan_as_a_float` |
+| `read_csv` "row N" counts records (header and blank lines) | yes | **Recorded, not changed**; pinned by the ragged-row case with a blank line |
+| Plan text says seconds regex `\d`, code uses `[0-9]` | yes | **Code kept** (rejects fullwidth digits, which are not seconds); pinned by `test_retry_after_seconds_returns_none_for_anything_unusable` with `５` |
+| Duplicate `Retry-After` headers fall back to backoff (httpx joins as `"5, 5"`) | yes | **Recorded, not changed**; pinned by `test_retry_after_seconds_gives_none_for_a_duplicated_header` |
+| A holdoff over the cap on the last attempt is exhaustion, a reader returning `inf` is "no value" but a header of hundreds of digits is `inf` | by reading | **Consistent with plan rules 2 and 3**; pinned by `test_the_last_attempt_is_exhaustion_not_a_holdoff_error` and the reader-parameter cases |
+
+Wrong expectations of mine, corrected on the record: the autumn DST range of 24 to 28 October
+is five windows, not four (97 elapsed hours because the 25th has 25); a `Retry-After` of `５`
+cannot be put in an httpx header as ASCII, so that case builds its headers with `utf-8`; a
+ragged `a;b / 1;2;` row cannot be sniffed as `;` from so small a sample, so that case passes
+`delimiter=";"` explicitly (`test_read_csv_trailing_delimiter_makes_a_ragged_row`).
 
 Edge cases considered and deliberately skipped, with reasons:
+
+- JSON declared in a non-UTF-8 `charset`: `test_read_response_json_ignores_the_charset_and_requires_utf8` pins today's behaviour (RFC 8259); no change.
+- Duplicate ZIP member names: pinned as last-wins; section 1 says nothing.
+- ZIP bombs and huge decompression: out of scope in section 1.
+- `max_attempts` given a float or NaN: outside the `int` type; not guarded at run time.
+- Real concurrency of `async_fetch_chunked`: only that no two windows overlap is tested; throughput is not.
+- Real sockets, DNS and TLS: forbidden by T14; the transports are mocked.
 
 ---
 
