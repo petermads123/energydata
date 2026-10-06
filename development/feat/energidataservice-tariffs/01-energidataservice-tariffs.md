@@ -1,6 +1,6 @@
 # Energi Data Service tariffs, subscriptions and elafgift
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | done |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -520,8 +520,8 @@ Drift found, and what was done about it:
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | cf9f5d2 WIP step 2: plan written, awaiting plan-critic; 065c408 Concept; 6c6bcac Plan; 944d1da Plan accepted; c5aac70 WIP step 3: max_span, dsos, pricelist; 333c92f Add DatahubPricelist tariffs, subscriptions and elafgift; c51d0eb Verify; c5d2e7d WIP step 5: pricelist fixture, mock date filter, GLN/ChargeType guard; 135865f Test; 2a190c9 Concept check; plus the Ship commit. Every step left a commit. Whole tree on 2026-10-06: ruff, ruff format, mypy clean; pytest 1735 passed. No stray files. Reviewed against origin/feat/energidataservice-markets (this round's own changes only). |
+| Pushed to | `origin/feat/energidataservice-tariffs` |
 
 ---
 
