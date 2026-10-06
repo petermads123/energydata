@@ -79,8 +79,10 @@ Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public n
 `src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and
 `src/energydata/energidataservice/reserves.py` (mFRR/aFRR capacity, FCR-N, FCR-D, FCR DK1, FFR
 prices). Tests:
-`tests/conftest.py` (the autouse no-network guard), `tests/test_energidataservice_client.py`
-and `tests/test_day_ahead.py`.
+`tests/conftest.py` (the autouse no-network guard, the `markets_records` and `markets_service`
+fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
+probe's real records for the seven market datasets), `tests/test_energidataservice_client.py`,
+`tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`.
 
 ## Package: `src/energydata/`
 

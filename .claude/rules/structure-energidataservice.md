@@ -42,7 +42,7 @@ Module constants: `SWITCH` (the `pd.Timestamp` of the switch) and the dataset an
 Private module behind every market price function in `balancing.py` and `reserves.py`. It
 holds one frozen dataclass describing a market (dataset, time field, output-name to
 source-field `fields`, `resolution`, `zoned`, `area`, `extra_filters`, `volume_fields`,
-`block_hours`) and the one shared path that turns it into a frame. That path resolves the
+`activation_fields`, `block_hours`) and the one shared path that turns it into a frame. That path resolves the
 period, fetches through the client (closing a client it created, leaving a passed one
 open), pivots with `records_to_wide`, and assembles with `combine_levels` (zoned) or a
 per-field `conform` (unzoned). FCR DK1's 4-hour blocks are indexed with `block_index`.
@@ -60,8 +60,8 @@ All 15-minute, EUR/MWh, columns `(zone, "up" | "down")`, from 2025-03-04. Each t
 | Signature | Description |
 |---|---|
 | `get_imbalance_prices(...)` | *ImbalancePrice* `ImbalancePriceEUR`, repeated in `up` and `down`. |
-| `get_afrr_energy_prices(...)` | *ImbalancePrice* `aFRRVWAUpEUR` / `aFRRVWADownEUR`. |
-| `get_mfrr_energy_prices(...)` | *MfrrEnergyActivationMarket* `mFRRSAUpEUR` / `mFRRSADownEUR`. |
+| `get_afrr_energy_prices(...)` | *ImbalancePrice* `aFRRVWAUpEUR` / `aFRRVWADownEUR`, each NaN in a slot where its activated volume (`aFRRUpMW` / `aFRRDownMW`) is 0 (the service publishes price 0.0 there). |
+| `get_mfrr_energy_prices(...)` | *MfrrEnergyActivationMarket* `mFRRSAUpEUR` / `mFRRSADownEUR`, as published (the price exists whether or not anything was activated). |
 | `main() -> None` | Showcase (live API). |
 
 ## `src/energydata/energidataservice/reserves.py`
@@ -83,4 +83,8 @@ Hourly capacity markets in EUR/MW/h; `include_volumes=True` appends volume colum
 Written at step 5, none touching the network: `tests/test_energidataservice_client.py`,
 `tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`, all on
 `httpx.MockTransport`; the market suites run on the real records in
-`tests/fixtures/energidataservice_markets.json`.
+`tests/fixtures/energidataservice_markets.json`. `tests/conftest.py` carries the support: the
+`markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
+that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
+does, notes every request, and can ignore the filter or answer with a custom response) and
+the `markets_service` fixture.

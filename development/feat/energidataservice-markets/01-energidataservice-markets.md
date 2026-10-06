@@ -1,6 +1,6 @@
 # Energi Data Service market price endpoints
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -379,6 +379,13 @@ new rather than `Service` (guide 7).
   the live day-ahead showcase run.
 - **Left for step 5:** `tests/fixtures/energidataservice_markets.json`, the `conftest.py`
   fixture and transport factory, and all test files.
+- **Step 5 changes to code** (from the amended A3 and test findings): aFRR energy requests
+  `aFRRUpMW`/`aFRRDownMW` and masks a direction's price to NaN where its MW is 0
+  (`_Market.activation_fields`, private); docstrings corrected (aFRR/mFRR energy, capacity
+  "as published", FCR DK1 `end`/`Raises`); `block_index` now rejects a bound with
+  microseconds and its docstring says a start inside the spring gap is absent;
+  `combine_levels` now raises `ValueError` naming a repeated `outer` name. No public
+  signature changed.
 
 ---
 
@@ -408,10 +415,57 @@ new rather than `Service` (guide 7).
 
 ## 5. Test log
 
+Suites: `tests/test_frames.py` (extended, +66 cases), `tests/test_balancing.py` (107),
+`tests/test_reserves.py` (183), on `tests/fixtures/energidataservice_markets.json` and the
+`MarketsService` mock in `tests/conftest.py`. Whole suite: 1484 passed; ruff, ruff format and
+mypy clean.
+
 | Intent | Test names | Result |
 |---|---|---|
+| T1 `block_index` | `test_block_index_gives_six_wall_clock_blocks_on_every_kind_of_day`, `..._is_half_open_named_time_and_in_nanoseconds`, `..._returns_nanoseconds_for_a_coarse_unit_input`, `..._counts_blocks_across_dst_days`, `..._keeps_the_repeated_autumn_hour_once_at_the_earlier_stamp`, `..._skips_a_start_inside_the_spring_gap`, `..._start_on_either_repeated_hour_survives`, `..._rejects_a_bound_with_a_sub_second_part`, `..._rejects_bad_bounds`, `..._rejects_hours_that_do_not_divide_a_day`, `..._converts_end_to_the_start_zone_before_checking_it`, `..._is_idempotent_...` | pass |
+| T1 `combine_levels` | `test_combine_levels_orders_outer_first_then_parts`, `..._keeps_given_order_and_never_sorts`, `..._pads_a_missing_zone_and_missing_slots_with_nan`, `..._drops_columns_that_are_not_in_outer`, `..._casts_to_float64_...`, `..._over_an_empty_index_...`, `..._gives_the_same_frame_under_two_keys_...`, `..._does_not_mutate_a_part_...`, `..._rejects_empty_parts_or_outer`, `..._rejects_a_part_with_a_duplicate_index_entry`, `..._rejects_a_repeated_outer_name_naming_it` | pass |
+| T2 zone-split values and shape | `test_prices_on_the_fixture_day_equal_the_records`, `test_imbalance_repeats_its_single_price_...`, `test_capacity_prices_on_the_fixture_day_equal_the_records`, `test_capacity_volumes_are_zone_major_...`, `test_afrr_capacity_never_returns_a_nordic_zone_even_if_one_is_served`, `test_a_zone_subset_and_its_order_are_kept`, `test_capacity_zone_subset_and_order_are_kept`, `test_the_latest_capacity_record_has_a_zero_down_price_not_nan` | pass |
+| T3 DK2-only and FCR DK1 | `test_dk2_prices_equal_the_fixture_totals`, `test_an_hour_without_a_total_row_is_nan_not_filled`, `test_fcr_takes_the_dk2_row_not_a_swedish_row_with_the_same_price`, `test_fcr_dk1_fixture_day_has_six_four_hour_blocks`, `test_fcr_dk1_lone_block_start_is_one_row_fetching_four_wall_clock_hours`, `test_fcr_dk1_rejects_a_bound_that_is_not_a_block_start_with_no_request`, `test_fcr_dk1_a_lone_date_is_a_day_and_a_lone_midnight_timestamp_is_a_block`, `test_fcr_dk1_partial_day_and_aware_start`, `test_fcr_dk1_dst_day_has_six_blocks_each_holding_its_first_hours_value`, `test_fcr_dk1_takes_the_first_hour_of_a_block_never_a_later_one` | pass |
+| T4 volumes | `test_capacity_volumes_are_zone_major_in_the_documented_order`, `test_capacity_without_volumes_requests_and_returns_only_prices`, `test_the_volumes_flag_is_not_sticky`, `test_ffr_values_zero_and_spike_are_kept`, `test_fcr_dk1_volumes_and_the_exact_request`, `test_dk2_volumes_are_off_by_default` | pass |
+| T5 period rules | `test_the_period_gives_every_quarter_hour_and_end_is_exclusive`, `test_a_naive_time_is_danish_time`, `test_a_bad_period_raises_naming_the_value_with_no_request` (balancing and reserves), `test_an_hourly_lone_date_has_the_length_of_the_local_day`, `test_an_hourly_market_rejects_a_quarter_hour_timestamp`, `test_an_hourly_lone_timestamp_is_one_slot_or_one_block`, `test_an_aware_time_in_the_repeated_hour_picks_one_quarter`, `test_a_dst_day_has_a_full_nan_shape`, `test_a_bad_zone_raises_before_any_request`, `test_capacity_bad_zones_raise_before_any_request` | pass |
+| T6 NaN behaviour | `test_a_period_before_the_dataset_is_all_nan_and_still_requested` (both modules), `test_a_null_imbalance_price_is_nan_while_afrr_of_the_same_record_is_not`, `test_a_null_mfrr_price_is_nan`, `test_a_zone_without_records_is_an_all_nan_column_pair`, `test_nothing_is_filled_from_a_neighbour`, `test_a_null_value_is_nan_and_independent_of_the_other_fields`, `test_a_null_dk2_price_is_nan`, `test_an_empty_response_keeps_the_named_columns_and_the_full_index`; amended A3: `test_afrr_energy_is_nan_for_a_direction_with_zero_activated_volume`, `..._masks_each_direction_and_zone_on_its_own_volume`, `..._keeps_the_price_when_the_activated_volume_is_missing`, `..._keeps_a_zero_price_when_volume_was_activated`, `..._null_price_is_nan_whatever_the_volume`, `test_imbalance_price_is_never_masked_by_the_afrr_volumes`, `test_mfrr_energy_price_is_published_even_without_a_requested_volume`, `test_mfrr_energy_keeps_a_zero_price_as_published`, `test_capacity_prices_are_returned_as_published_zero_included` | pass |
+| T7 requests and client | `test_imbalance_asks_once_for_its_one_price_field`, `test_afrr_energy_asks_for_prices_and_the_volumes_that_gate_them`, `test_mfrr_energy_asks_for_its_dataset_and_two_price_fields`, `test_capacity_asks_for_its_dataset_with_the_zone_filter_and_sort`, `test_fcr_asks_only_for_its_product_total_and_dk2`, `test_fcr_calls_send_the_same_filter_each_time`, `test_ffr_sends_no_zone_filter_and_asks_only_for_its_fields`, `test_dk2_functions_take_no_zone_argument`, `test_an_owned_client_is_created_and_closed`, `..._closed_when_the_service_refuses`, `test_a_payload_without_records_raises_and_still_closes_an_owned_client`, `test_a_passed_client_is_left_open_...`, `test_a_closed_passed_client_raises_without_a_request`, `test_a_call_works_inside_a_running_event_loop`, `test_windows_of_a_long_period_run_concurrently`, `test_a_period_is_split_into_windows_that_give_the_same_frame`, `test_records_outside_the_period_are_ignored`, `test_a_duplicate_record_raises_naming_it`, `test_fcr_trusts_the_server_filter_...` | pass |
+| T8 fixtures, no network | every market test runs on the fixture through `MarketsService`; the autouse no-network guard stays on; the existing utils source-scan test still passes (README/docstring content is step 6's read) | pass |
+
+Bugs the tests found, fixed in this step:
+
+1. `block_index` accepted a bound with microseconds (checked `.second` and `.nanosecond`
+   only). Fixed; covered by `..._rejects_a_bound_with_a_sub_second_part`.
+2. `combine_levels` returned duplicate columns for a repeated `outer` name instead of
+   refusing. Now `ValueError` naming it (a function that returns a plausible wrong answer
+   is worse than one that raises).
+3. aFRR energy returned 0.0 for a direction with no activation (the user decision on A3);
+   now NaN via the activated-volume fields. Docstrings that claimed "not activated is NaN"
+   for mFRR energy and capacity corrected to match the data (user decision).
+4. Stale `get_fcr_dk1_prices` `end` and `Raises` text corrected to say 4-hour block.
+
+Designer contradictions, on the record:
+
+| # | Item | Disposition |
+|---|---|---|
+| in-1 / co-3 | `block_index` accepts microseconds | Applied: bug fixed (above). |
+| in-2 / co-1 | aFRR "not activated is NaN" vs 0.0 | Settled by user decision 1: code masks on MW 0; tests above. |
+| in-3 / co-2 | mFRR "not activated is NaN" | Settled by user decision 1: SA price as published; docstring fixed, test pins it. |
+| in-4 | A3 "not procured is a NaN column" vs 0.0 | Settled by user decision 2: capacity as published; tests pin 0.0 and the null-only NaN. |
+| in-5 | FCR products trusted to the server filter | Rebutted, pinned: `ProductName`/`AuctionType` are filtered server-side and never requested as columns; an unfiltered response raises `ValueError` (duplicate), never a wrong price. Test `test_fcr_trusts_the_server_filter_...` documents it. Area is also filtered client-side by pivoting on `PriceArea` (`..._not_a_swedish_row_...`). |
+| in-6 / co-6 | stale FCR DK1 docstring | Applied: `end` and `Raises` reworded. |
+| in-7 / co-4 | `block_index` and a start in the spring gap | Applied as wording: docstring says such a start is absent; test `..._skips_a_start_inside_the_spring_gap`. Behaviour kept (a nonexistent wall-clock start has no instant; `hours=4` unaffected). |
+| in-8 / co-7 | `bidding_zones=None` means both zones in `_get` | Rebutted: private path, public signatures do not admit `None`; FCR DK1 and the DK2 markets pass `None` as "no zone level". Not exposed. |
+| in-9 | hourly market silently drops off-grid records | Pinned, not changed: `test_capacity_drops_an_off_grid_record_without_error`; `conform` never fills or invents slots. Noted in the skipped list. |
+| co-5 | service data faults raise `ValueError`, not `EnergiDataServiceError` | Rebutted: `EnergiDataServiceError` is the payload-shape error of the client; `records_to_wide` raises `ValueError` for duplicate/unparseable values as `get_day_ahead_prices` already does (previous round, merged). Tests pin the duplicate case. A uniform wrapping is a possible later round, not a defect here. |
 
 Edge cases considered and deliberately skipped, with reasons:
+
+- Text/non-ASCII inputs: the only text is the zone, owned and tested by `normalize_bidding_zones`.
+- A live DST autumn day for FCR DK1: not checkable offline; synthetic hourly records prove the block grid (`..._dst_day_has_six_blocks_...`).
+- Retry/429 behaviour: belongs to `ApiClient` and the client suites of the previous rounds.
+- README and docstring wording (T8): read by step 6, no executable assertion added.
+- A 15-minute capacity dataset (Nordic MTU change): off-grid rows are dropped and pinned; supporting them would be a new concept.
 
 ---
 
