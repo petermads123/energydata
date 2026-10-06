@@ -1,6 +1,7 @@
 """Split a period an API refuses as too long into windows, and fetch each one."""
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -104,6 +105,75 @@ async def async_fetch_chunked[T](
     return results
 
 
+async def _gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
+    """Run `calls` concurrently and return their results in call order.
+
+    The first failure cancels the calls still running. The exception raised is
+    that of the lowest-index call that failed, chained from the task group's
+    `ExceptionGroup`, so a caller never has to unpack a group.
+    """
+    results: dict[int, T] = {}
+    failures: dict[int, Exception] = {}
+
+    async def run_one(position: int, call: Callable[[], Awaitable[T]]) -> None:
+        try:
+            results[position] = await call()
+        except Exception as exc:  # recorded so the lowest index can be re-raised
+            failures[position] = exc
+            raise
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            for position, call in enumerate(calls):
+                group.create_task(run_one(position, call))
+    except ExceptionGroup as group_error:
+        raise failures[min(failures)] from group_error
+    return [results[position] for position in range(len(calls))]
+
+
+async def gather_chunked[T](
+    fetch: Callable[[datetime, datetime], Awaitable[T]],
+    start: datetime,
+    end: datetime,
+    span: timedelta,
+    *,
+    limit: int | None = None,
+) -> list[T]:
+    """Await `fetch` for every window of `[start, end)` concurrently.
+
+    Args:
+        fetch: Awaited with each window's start and end.
+        start: Start of the period, inclusive. Must be timezone-aware.
+        end: End of the period, exclusive. Must be timezone-aware.
+        span: The longest a single window may be. Must be positive.
+        limit: The most windows in flight at once. `None` means unbounded.
+
+    Returns:
+        The results, in window order however the windows finish. When windows
+        fail, the rest are cancelled and the exception of the lowest-index
+        failed window is raised, chained from the group.
+
+    Raises:
+        ValueError: If `limit` is below 1, or as for `date_windows`, before
+            any call is made.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be at least 1 or None, got {limit}")
+    windows = date_windows(start, end, span)
+    semaphore = asyncio.Semaphore(limit) if limit is not None else None
+
+    def bind(lo: datetime, hi: datetime) -> Callable[[], Awaitable[T]]:
+        async def call() -> T:
+            if semaphore is None:
+                return await fetch(lo, hi)
+            async with semaphore:
+                return await fetch(lo, hi)
+
+        return call
+
+    return await _gather_ordered([bind(lo, hi) for lo, hi in windows])
+
+
 def main() -> None:
     """Showcase this module's functionality."""
     zone_name = "Europe/Copenhagen"  # any IANA time-zone name
@@ -136,6 +206,19 @@ def main() -> None:
     results = fetch_chunked(describe, start, end, span)
 
     print(f"results: {results}")
+
+    # The same windows fetched concurrently, two at a time, still in order.
+    async def describe_later(lo: datetime, hi: datetime) -> str:
+        await asyncio.sleep(0)
+        return describe(lo, hi)
+
+    limit = 2  # at most this many windows in flight; None means unbounded
+
+    concurrent = asyncio.run(
+        gather_chunked(describe_later, start, end, span, limit=limit)
+    )
+
+    print(f"concurrent results (limit {limit}): {concurrent}")
 
 
 if __name__ == "__main__":
