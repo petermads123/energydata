@@ -1,6 +1,6 @@
 # Energi Data Service tariffs, subscriptions and elafgift
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -401,6 +401,28 @@ finding was about data:
 ---
 
 ## 3. Implementation notes
+
+Deviations from the plan (none changes the Public API table or an acceptance criterion):
+
+- The row tie-break "then the row whose note has no Flex/time" is not implemented: `Note` is
+  not fetched, since the plan records no equal-`ValidFrom` pair within any mapped code. Ties
+  resolve by `ValidFrom`, then code order.
+- `_fetch` became `_load` and uses the sync `get_dataset` (which goes through `run`); the
+  owned-client pattern is as in `day_ahead.py`.
+- `client.py` gained a private `_check_span`, shared by the constructor and the `max_span`
+  override.
+
+Left for step 5: the fixture fetch (`tests/fixtures/energidataservice_pricelist.json`), the
+`conftest.py` `MarketsService` filter-field mapping and `pricelist_service` fixture, and all
+tests (`test_pricelist.py`, `test_dsos.py`, `max_span` in `test_energidataservice_client.py`).
+`STRUCTURE.md` and the rules file name the new tests only through the rules file's `paths`.
+
+Live check (2026-10-06, one showcase run plus a few raw queries): Radius 2026-10-15 18:00
+is 0.955573, equal to that row's `Price19` (ValidFrom 2026-10-01); Energinet 2026-06-01 gives
+system 0.072 and transmission 0.043; elafgift 2025-12-31 is 0.72 and 2026-01-01 0.008; the
+Radius subscription over 2025-12-01 to 2026-02-01 is one row of 36.773011. Every mapped
+tariff code since 2025 has `ResolutionDuration` `PT1H` (429 rows) or `P1D` (20), and every
+mapped subscription code `P1M` (104), so no row raises.
 
 ---
 

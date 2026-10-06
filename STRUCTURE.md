@@ -40,7 +40,7 @@ here, but everything in this file is in context every session.
 src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
-    energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices
+    energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -78,7 +78,9 @@ Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public n
 `src/energydata/energidataservice/_markets.py` (private shared fetch-and-shape path),
 `src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and
 `src/energydata/energidataservice/reserves.py` (mFRR/aFRR capacity, FCR-N, FCR-D, FCR DK1, FFR
-prices). Tests:
+prices), `src/energydata/energidataservice/dsos.py` (`Dso`, `DSOS`, the friendly-name DSO table) and
+`src/energydata/energidataservice/pricelist.py` (DSO and Energinet tariffs and subscriptions, electricity
+tax, from *DatahubPricelist*). Tests:
 `tests/conftest.py` (the autouse no-network guard, the `markets_records` and `markets_service`
 fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
 probe's real records for the seven market datasets), `tests/test_energidataservice_client.py`,
