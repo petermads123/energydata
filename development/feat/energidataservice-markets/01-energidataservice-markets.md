@@ -186,6 +186,7 @@ Rejected:
 | `tests/conftest.py` | changed | Adds a `markets_records` fixture that loads that file, plus a factory that builds an `httpx.MockTransport` serving those records. It filters by the request's `start`/`end` (UTC), `filter` and `columns`, as the API would. |
 | `tests/test_balancing.py`, `tests/test_reserves.py` | new | One suite per new public module. `tests/test_frames.py` is extended for the two new utils. |
 | `README.md` | changed | Ten rows in the Energi Data Service endpoints table. |
+| `DEVELOPMENT.md` | changed | Narrow the "Remaining Energi Data Service endpoints are next" entry to tariffs, subscriptions and elafgift. |
 | `STRUCTURE.md`, `.claude/rules/structure-utils.md`, `.claude/rules/structure-energidataservice.md` | changed | New modules (full paths, `_markets.py` included), signatures and test files. |
 
 ### Public API
@@ -195,14 +196,14 @@ Common argument types come from PR #3: `TimeLike`, `BiddingZone`, `BIDDING_ZONES
 
 | Signature | Module | Purpose | Covers |
 |---|---|---|---|
-| `block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.DatetimeIndex` | `utils.frames` | Every block start in `[start, end)`: the local wall-clock times in `start`'s zone whose hour is a multiple of `hours`, at minute 0. A DST change makes the block that contains it shorter or longer, but never moves a start. The result is `datetime64[ns, tz]`, named `"time"`. Raises `ValueError` naming the value for: a naive bound; `start >= end`; `hours` not in `{1, 2, 3, 4, 6, 8, 12, 24}`; or a bound that is not a block start. | A2 |
+| `block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.DatetimeIndex` | `utils.frames` | Every block start in `[start, end)`: the local wall-clock times in `start`'s zone whose hour is a multiple of `hours`, at minute 0. A DST change makes the block that contains it shorter or longer, but never moves a start; a wall-clock start that occurs twice (the repeated autumn hour) is kept once, the earlier. The result is `datetime64[ns, tz]`, named `"time"`. Raises `ValueError` naming the value for: a naive bound; `start >= end`; `hours` not a positive divisor of 24; or a bound that is not a block start. | A2 |
 | `combine_levels(parts: Mapping[str, pd.DataFrame], index: pd.DatetimeIndex, outer: Sequence[str]) -> pd.DataFrame` | `utils.frames` | Each part is a wide frame whose columns are drawn from `outer`. Each part is conformed to `index` and `outer` with NaN padding, and the result has MultiIndex columns `(outer, part key)`. Ordering is `outer` first, then `parts`' order, so `outer=["DK1","DK2"]` with parts `up` and `down` gives `DK1/up, DK1/down, DK2/up, DK2/down`. The values are float64. Empty `parts` or empty `outer` raise `ValueError`. | A3, A6 |
 | `get_imbalance_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.balancing` | Reads *ImbalancePrice* (from 2025-03-04) at 15 minutes. Columns are `(zone, up/down)`, and both directions hold `ImbalancePriceEUR`. Values are in EUR/MWh. | A1–A3, A5, A7, A8 |
 | `get_afrr_energy_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.balancing` | Reads *ImbalancePrice* at 15 minutes. `up` is `aFRRVWAUpEUR` and `down` is `aFRRVWADownEUR`. Values are in EUR/MWh. | A1–A3, A5, A7, A8 |
 | `get_mfrr_energy_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.balancing` | Reads *MfrrEnergyActivationMarket* (from 2025-03-04) at 15 minutes. `up` is `mFRRSAUpEUR` and `down` is `mFRRSADownEUR`. Values are in EUR/MWh. | A1–A3, A5, A7, A8 |
 | `get_mfrr_capacity_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | Reads *MfrrCapacityMarket* (from 2023-06-21), hourly. `up` is `UpPriceEUR` and `down` is `DownPriceEUR`, in EUR/MW/h. With volumes, `up_demand`, `up_procured`, `down_demand` and `down_procured` are added, in MW. | A1–A3, A5–A8 |
 | `get_afrr_capacity_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | Reads *AfrrReservesNordic* (from 2022-12-08), hourly, with the same fields and columns as mFRR capacity. The request filters to the selected DK zones, so Nordic rows never arrive. | A1–A3, A5–A8 |
-| `get_fcr_n_prices(start: TimeLike, end: TimeLike \| None = None, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | Reads *FcrNdDK2* (from 2021-11-10), hourly, with the filter `ProductName = "FCR-N"`, `AuctionType = "Total"`. Column `price` is `PriceTotalEUR`, in EUR/MW/h. With volumes, `purchased_local` and `purchased_total` are added, in MW. | A1, A2, A4–A8 |
+| `get_fcr_n_prices(start: TimeLike, end: TimeLike \| None = None, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | Reads *FcrNdDK2* (from 2021-11-10), hourly, with the filter `PriceArea = "DK2"`, `ProductName = "FCR-N"`, `AuctionType = "Total"` (the dataset also carries SE1–SE4 rows with the same price but Swedish volumes). Column `price` is `PriceTotalEUR`, in EUR/MW/h. With volumes, `purchased_local` and `purchased_total` are added, in MW. | A1, A2, A4–A8 |
 | `get_fcr_d_up_prices(start: TimeLike, end: TimeLike \| None = None, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | The same as `get_fcr_n_prices`, with `ProductName = "FCR-D upp"`. | A1, A2, A4–A8 |
 | `get_fcr_d_down_prices(start: TimeLike, end: TimeLike \| None = None, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | The same, with `ProductName = "FCR-D ned"`. | A1, A2, A4–A8 |
 | `get_fcr_dk1_prices(start: TimeLike, end: TimeLike \| None = None, *, include_volumes: bool = False, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.reserves` | Reads *FcrDK1* (from 2021-01-19). The index is the 4-hour block starts (`block_index(..., 4)`), and each block takes the value of its first hour's record. Columns are `cross_border` (`FCRcross_EUR`) and `danish` (`FCRdk_EUR`), in EUR/MW/h. With volumes, `domestic` and `abroad` are added, in MW. A lone date gives that day's blocks. A lone timestamp gives one block and must be a block start. | A1, A2, A4–A8 |
@@ -230,7 +231,7 @@ Shared behaviour for all ten functions:
    - `fields`: a mapping from output column name to source field, in order;
    - `resolution`;
    - `zoned: bool`;
-   - `extra_filters`: a mapping, for FCR's `ProductName` and `AuctionType`;
+   - `extra_filters`: a mapping, for FCR-N/D's `PriceArea = ["DK2"]`, `ProductName` and `AuctionType = ["Total"]`;
    - `volume_fields`: a mapping from output name to source field.
 
    Then add two private functions.
@@ -243,13 +244,20 @@ Shared behaviour for all ten functions:
      extra filters), `columns` (the time field, `PriceArea` when zoned, and the fields) and
      `sort_by`;
    - pivot each field. Zoned markets use `records_to_wide(column="PriceArea")` and
-     `combine_levels`. Unzoned markets set a constant key and take the single column, then
-     `conform` it to the index with the output names.
+     `combine_levels`. Unzoned markets pivot through `records_to_wide` too, so its
+     parsing and duplicate check are reused: FCR-N/D with `column="PriceArea"`, taking
+     `"DK2"`; FcrDK1 and FfrDK2 (no `PriceArea` field) by passing
+     `[{**r, "_key": "v"} for r in records]` with `column="_key"`. Each field's single
+     column is renamed to its output name and `conform`ed to the index.
 
    `_get_blocks(...)` does the same for FCR DK1:
    - It fetches hourly data over the block period.
-   - It handles a lone timestamp itself: it calls `resolve_period(..., resolution=1h)` and,
-     when the span is one hour, extends `end` to `start + 4h`. `block_index` then rejects a
+   - It handles a lone timestamp itself: only when `end is None` and
+     `resolve_period(..., resolution=1h)` returns a one-hour span does it move `end` to the
+     next block start in wall-clock time,
+     `(first.tz_localize(None) + pd.Timedelta(hours=4)).tz_localize(first.tz)` (safe,
+     because 04/08/… never fall in a DST hour). An explicit `end` is never widened, so a
+     one-hour explicit period is rejected by `block_index` as a misaligned bound, as is a
      start that is not on a block.
    - It conforms the hourly frame to `block_index(first, last, 4)`, which picks each
      block's first hour.
@@ -262,7 +270,7 @@ Shared behaviour for all ten functions:
    showcase fetches one recent day for two markets, one with volumes.
 6. **`energidataservice/__init__.py`.** Re-export the ten functions.
 7. **Tests.** Copy the fixture records into `tests/fixtures/energidataservice_markets.json`,
-   then add the conftest fixture and transport factory, then the suites (intents below).
+   then add the conftest fixture and transport factory, then the suites (intents below). The factory is new rather than `test_day_ahead.py`'s `Service`, because it must also filter on `PriceArea`/`ProductName`/`AuctionType` and serve seven datasets; `Service` stays as is.
 8. **Docs.** Update the README rows, `STRUCTURE.md`, and both rules files, with full
    paths.
 
@@ -270,13 +278,13 @@ Shared behaviour for all ten functions:
 
 | # | Must prove | Covers |
 |---|---|---|
-| T1 | `block_index`: 6 blocks on a normal day; 6 on both DST days, with starts at local 00/04/…/20 and the shift-containing block 3 h or 5 h long; half-open; `ns` unit, name `"time"`; every `ValueError` case (naive, order, bad `hours`, misaligned bound). `combine_levels`: outer-major order, NaN padding for missing parts or zones, float64, rejection of empty input. | A2, A3, A6 |
+| T1 | `block_index`: 6 blocks on a normal day; 6 on both DST days, with starts at local 00/04/…/20 and the shift-containing block 3 h or 5 h long; `hours=2` on the autumn day keeps the repeated 02:00 once; half-open; `ns` unit, name `"time"`; every `ValueError` case (naive, order, bad `hours`, misaligned bound). `combine_levels`: outer-major order, NaN padding for missing parts or zones, float64, rejection of empty input. | A2, A3, A6 |
 | T2 | On the fixture day 2026-09-15, each zone-split function returns the right shape: 96 × 4 for 15-minute markets and 24 × 4 for hourly. Columns are `(DK1, up), (DK1, down), (DK2, up), (DK2, down)`. Values equal the fixture records: imbalance DK1 23:45 = 171.04 in both directions; aFRR energy 179.52/86.09; mFRR energy 254.17/171.04; mFRR capacity DK1 23:00 = 2.01/0.11; aFRR capacity DK1 23:00 = 0.4/0.02. A zone subset and its order are respected. aFRR capacity never contains Nordic zones, even if the transport returns them. | A1–A3, A5 |
-| T3 | The DK2-only functions return a `price` column equal to the fixture: FCR-D down 12:00 = 2.872822 (Total, not an auction); FCR-D up and FCR-N at fixture hours; FFR 23:00 = 23.0. FCR DK1 on the fixture day gives 6 rows at 00/04/…/20 with `cross_border` 18.22, 13.0, 34.79, 52.61, 49.2, 25.0 and `danish` 3.69, 11.62, 34.79, …. A lone block-start timestamp gives one row, a mid-block timestamp raises `ValueError`, and a lone date gives the day's blocks. | A2, A4, A5 |
+| T3 | The DK2-only functions return a `price` column equal to the fixture: FCR-D down 12:00 = 2.872822 (Total, not an auction); FCR-D up and FCR-N at fixture hours; FFR 23:00 = 23.0. FCR DK1 on the fixture day gives 6 rows at 00/04/…/20 with `cross_border` 18.22, 13.0, 34.79, 52.61, 49.2, 25.0 and `danish` 3.69, 11.62, 34.79, …. A lone block-start timestamp gives one row (also `00:00` on 2026-03-29 and 2026-10-25), a mid-block timestamp raises `ValueError`, an explicit one-hour `end` raises, and a lone date gives the day's blocks. FCR-N/D take only DK2 rows: SE rows the transport serves never reach the frame, and FCR-N/FCR-D up are asserted at fixture hours 13:00–23:00 (12:00 lacks their Total). | A2, A4, A5 |
 | T4 | `include_volumes=True` adds exactly the documented columns in the documented order, with fixture values: mFRR capacity DK1 23:00 `up_demand` 319, `up_procured` 390; FCR DK1 00:00 `domestic` 5, `abroad` 24; FFR 23:00 `demand` 5.485, `purchased` 6.2. `False` adds none. | A6 |
 | T5 | Period rules for one function per resolution (15 min, hourly, blocks): naive input is Danish time; a lone date gives a whole day (92/96/100 at 15 min, 23/24/25 hourly); a lone timestamp gives one slot; `end` is exclusive; a misaligned timestamp, `start >= end` and an unknown zone raise `ValueError` naming the value, with no request made. | A1, A2 |
 | T6 | NaN behaviour: a period before the dataset starts returns a full all-NaN frame; a `None` price in a record (as in the probe's latest imbalance record) is NaN; a direction with no data for a zone is an all-NaN column; nothing is ever filled from a neighbour. | A3, A7 |
-| T7 | Requests: each function asks for its own dataset with the exact `filter` (zones, plus FCR's product and `Total`), `columns` and `sort`. FCR-N/D never ask for other products. A passed client is left open, an own client is closed (also on HTTP 400). A call from inside a running event loop works. A long period is split into windows that run concurrently. | A7 |
+| T7 | Requests: each function asks for its own dataset with the exact `filter` (zones, plus FCR's product and `Total`), `columns` and `sort`. FCR-N/D never ask for other products or areas. A passed client is left open, an own client is closed (also on HTTP 400). A call from inside a running event loop works. A long period is split into windows that run concurrently. FCR-N/D filter `PriceArea` to `DK2`. A closed passed client raises `RuntimeError`; a payload without `records` raises `EnergiDataServiceError` and an own client is still closed. | A7 |
 | T8 | README rows and docstrings name the dataset, start date, currency and unit, resolution, format and zones for all ten functions. The existing `utils` source-scan test still passes with the new `frames` code, which names no Energi Data Service specifics. The fixture is used and the no-network guard holds. | A8 |
 
 ### Coverage check
@@ -295,9 +303,29 @@ Shared behaviour for all ten functions:
 - **Every API entry traces to a criterion:** `block_index` and `combine_levels` trace to
   A2, A3 and A6. The showcases follow the module convention.
 
+### Critique
+
+Read by the `plan-critic` (verdict: accept with changes). All applied:
+
+1. FcrNdDK2 also carries SE1–SE4 rows (same price, Swedish volumes) → FCR-N/D filter
+   `PriceArea = DK2` (API rows, guide 3, T3, T7).
+2. FCR DK1 lone-timestamp rule broke on DST days and widened an explicit `end` → only
+   when `end is None`, end = next block in wall-clock time; explicit one-hour end raises
+   (guide 3, T3).
+3. The unzoned pivot was left open → `records_to_wide` with an injected constant key, or
+   `PriceArea = DK2` for FCR-N/D (guide 3, Risks).
+4. `block_index` with `hours=2` duplicated the repeated autumn hour → any divisor of 24;
+   a repeated wall-clock start is kept once (API, T1).
+5. `RuntimeError` / `EnergiDataServiceError` lacked intents → added to T7.
+6. The `DEVELOPMENT.md` entry this branch resolves → narrowed in the same branch
+   (Modules).
+
+Minor, applied: the 12:00 FCR fixture gap (Risks, T3) and why the conftest transport is
+new rather than `Service` (guide 7).
+
 ### Risks
 
-- **The fixture has 12 FcrNdDK2 hours** (the probe stopped at 500 records), and no DST day
+- **The fixture has 12 FcrNdDK2 hours** (the probe stopped at 500 records; 12:00 lacks the FCR-N and FCR-D up `Total` rows, so assert those at 13:00–23:00), and no DST day
   for any dataset. Tests for DST days and for hours outside the fixture build synthetic
   records in the same shape. This is not a halt.
 - **The fixture's `TimeUTC`/`HourUTC` values are naive UTC strings**, which
@@ -313,9 +341,8 @@ Shared behaviour for all ten functions:
   already honours `Retry-After` up to 300 s. No change is planned; the showcase may be
   slow if it is rate-limited.
 - **The unzoned fetch path.** FcrDK1 and FfrDK2 have no `PriceArea` field, so their
-  requests send no zone filter and pivot on a constant. If `records_to_wide` cannot take a
-  constant column key, use a private one-column frame instead. Do not change
-  `records_to_wide`'s signature.
+  requests send no zone filter and pivot on an injected constant key (guide 3). Do not
+  change `records_to_wide`'s signature.
 - **Anything that would change section 1** halts the build: for example, a field the
   concept names turning out absent, or a market whose data is not at the agreed
   resolution.
