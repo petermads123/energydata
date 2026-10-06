@@ -37,3 +37,16 @@ by heading is updated in the same change.
   `feat/energidataservice-markets`; on a new branch from `main` build tariffs,
   subscriptions and elafgift (*DatahubPricelist*, DSO mapping). Spec:
   `ideas/energydata/energidataservice-datasets.md`.
+
+## `feat/energidataservice-markets` round 1 (2026-10-06)
+
+- **Hourly capacity functions drop off-grid rows.** mFRR/aFRR capacity, FCR-N/D and FFR are
+  hourly; a `:15`/`:30`/`:45` record is silently dropped (pinned by a test). If Energinet
+  moves a capacity dataset to a 15-minute MTU, the function would return a quarter of the
+  data without error — revisit the resolution then.
+- **FCR DK1 on an autumn DST day is unverified live.** Synthetic records prove the
+  00/04/…/20 block grid; the live check of 2025-10-26 hit the rate limit.
+- **README and docstring wording has no test.** Plan intent T8 was skipped at step 5; step 6
+  read all ten docstrings and README rows instead. A test like `test_day_ahead`'s
+  docstring/README check would pin them.
+
