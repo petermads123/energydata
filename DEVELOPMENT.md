@@ -18,10 +18,23 @@ by heading is updated in the same change.
   October change. Eloverblik takes dates, so its subpackage must normalise boundaries to
   dates itself (or pick a span with margin).
 - **Pass the CSV delimiter explicitly for Danish data.** `read_csv`'s sniffer can pick `,`
-  on a one-column file with decimal commas (`41,5`) and then reports ragged rows; the
-  Energi Data Service subpackage should pass `delimiter=";"` rather than rely on sniffing.
+  on a one-column file with decimal commas (`41,5`) and then reports ragged rows. The Energi
+  Data Service client reads JSON, so this applies to any source or dataset read as CSV:
+  pass `delimiter=";"` rather than rely on sniffing.
 - **Flat `tests/` will collide.** One `test_<module>.py` per module in a flat `tests/` breaks
   once two subpackages have a module of the same name (e.g. two `client.py`); decide on
   `tests/<subpackage>/` with `__init__.py` files before the second source subpackage lands.
+  The first (`energidataservice`) sidestepped it with `test_energidataservice_client.py`.
 - **`read_json` accepts `NaN` and `Infinity`.** Stdlib leniency, pinned by a test; revisit
   if a source ever returns them and a caller needs them refused.
+
+## `feat/energidataservice-client` round 1 (2026-10-06)
+
+- **Live API constants unconfirmed.** The dataset and field names (`DayAheadPrices`:
+  `TimeUTC`/`DayAheadPriceEUR`; `Elspotprices`: `HourUTC`/`SpotPriceEUR`), `end` being
+  exclusive and `sort=… asc` being honoured come from the API docs; the build container could
+  not reach the API. Confirm with `python -m energydata.energidataservice.day_ahead`; a
+  mismatch fails loudly (HTTP 400 or a duplicate-record `ValueError`), not silently.
+- **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
+  private helper from `utils/chunking.py` for the lowest-index re-raise rule; make it public
+  (with a `structure-utils.md` row) when a second caller needs it.
