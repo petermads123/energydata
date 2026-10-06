@@ -1,6 +1,6 @@
 # Energi Data Service client and day-ahead prices
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -379,6 +379,29 @@ and T1, wider than section 1 only by applying the same rule to both bounds.
 ---
 
 ## 3. Implementation notes
+
+No deviation from the Public API table; every signature is as written. Smaller points:
+
+- **Tests left to step 5.** `/implement` writes production code only, so `tests/conftest.py`
+  (the guard moved out of `test_retry.py`), the `test_retry.py` edit and the new suites are
+  not written. `tests/test_readers.py::test_httpx_is_the_only_runtime_dependency` is red
+  until step 5 changes it to assert `httpx` and `pandas`; that is the plan's listed edit,
+  not a regression. STRUCTURE.md already names the test paths step 5 creates.
+- **Absolute imports across subpackages.** Ruff's `TID252` forbids `from ..utils import`,
+  so `energidataservice/client.py` and `day_ahead.py` import `energydata.utils.<module>`.
+  Within `utils`, relative sibling imports are unchanged.
+- **`_gather_ordered` is imported across modules.** The plan asked for the lowest-index
+  re-raise rule as a private helper the day-ahead module reuses, so
+  `day_ahead.py` imports `_gather_ordered` from `energydata.utils.chunking`. It is not in
+  the public API or `utils/__init__.py`.
+- **`gather_chunked` also re-exported.** `utils/__init__.py` re-exports the new public
+  names (`ApiClient`, `gather_chunked`, `resolve_period`, `TimeLike`, `DANISH_TZ`,
+  `BiddingZone`, `BIDDING_ZONES`, `normalize_bidding_zones`, the four `frames` functions).
+- **`ApiClient.close`** also cancels work still running on the loop before closing the HTTP
+  client, so a `run` in flight in another thread ends with a cancellation instead of hanging.
+- Offline check: `get_day_ahead_prices` against a `MockTransport` returned the expected
+  frame (mid-hour start, 15-minute value winning, hourly forward-fill). The live showcases
+  fail here with `httpx.ProxyError: 403 Forbidden`, as the plan's Risks expected.
 
 ---
 

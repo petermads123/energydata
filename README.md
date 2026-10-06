@@ -16,6 +16,28 @@ Or in `dependencies` in `pyproject.toml`:
 "energydata @ git+https://github.com/petermads123/energydata.git@main"
 ```
 
+## Endpoints
+
+Every endpoint returns a `pandas.DataFrame` with a tz-aware `Europe/Copenhagen` index.
+Naive `start`/`end` values are read as Danish local time, periods are half-open
+`[start, end)`, a lone date means the whole local day and a lone timestamp means one slot.
+A slot with no published data is NaN, never filled from a neighbour.
+
+### Energi Data Service
+
+```python
+from energydata.energidataservice import get_day_ahead_prices
+
+prices = get_day_ahead_prices("2026-01-15", bidding_zones=["DK1", "DK2"])
+```
+
+| Function | Currency and unit | Resolution | Format | Zones | Source datasets |
+|---|---|---|---|---|---|
+| `get_day_ahead_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh, excl. VAT | 15 minutes | wide: one float column per zone | `DK1`, `DK2` | *DayAheadPrices* (15 minutes, current) and *Elspotprices* (hourly, history, forward-filled to quarter-hours; the 15-minute value wins on overlap) |
+
+The functions are plain synchronous calls, also from Jupyter. Several requests for one call
+run concurrently, up to a configurable cap.
+
 ## Layout
 
 This repo was created from a template and set up with `/repo-setup`.
