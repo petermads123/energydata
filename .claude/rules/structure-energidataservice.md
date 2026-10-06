@@ -39,12 +39,18 @@ Module constants: `SWITCH` (the `pd.Timestamp` of the switch) and the dataset an
 
 ## `src/energydata/energidataservice/_markets.py`
 
-Private; no public names. A frozen `_Market` dataclass (dataset, time field, output-name to source-field
-`fields`, `resolution`, `zoned`, `area`, `extra_filters`, `volume_fields`, `block_hours`) and
-`_get(market, start, end, bidding_zones, include_volumes, client)`, the one path every market
-function uses: resolve the period, fetch through the client (own client closed, passed one left open),
-pivot with `records_to_wide`, assemble with `combine_levels` (zoned) or per-field `conform` (unzoned),
-and index by `block_index` for 4-hour FCR DK1 blocks. Has an offline `main()`.
+Private module behind every market price function in `balancing.py` and `reserves.py`. It
+holds one frozen dataclass describing a market (dataset, time field, output-name to
+source-field `fields`, `resolution`, `zoned`, `area`, `extra_filters`, `volume_fields`,
+`block_hours`) and the one shared path that turns it into a frame. That path resolves the
+period, fetches through the client (closing a client it created, leaving a passed one
+open), pivots with `records_to_wide`, and assembles with `combine_levels` (zoned) or a
+per-field `conform` (unzoned). FCR DK1's 4-hour blocks are indexed with `block_index`.
+
+| Signature | Description |
+|---|---|
+| `AREA: str` | `"PriceArea"`, the zone field and filter key. |
+| `main() -> None` | Offline showcase of the block-period handling. |
 
 ## `src/energydata/energidataservice/balancing.py`
 
@@ -64,7 +70,7 @@ Hourly capacity markets in EUR/MW/h; `include_volumes=True` appends volume colum
 
 | Signature | Description |
 |---|---|
-| `get_mfrr_capacity_prices(start, end=None, bidding_zones=BIDDING_ZONES, *, include_volumes: bool = False, client=None) -> pd.DataFrame` | *MfrrCapacityMarket* (from 2023-06-21); `(zone, up/down)` plus `up_demand`, `up_procured`, `down_demand`, `down_procured`. |
+| `get_mfrr_capacity_prices(start, end=None, bidding_zones=BIDDING_ZONES, *, include_volumes: bool = False, client=None) -> pd.DataFrame` | *MfrrCapacityMarket* (from 2023-06-21); `(zone, field)` MultiIndex columns, zone-major: per zone `up`, `down`, then with `include_volumes` `up_demand`, `up_procured`, `down_demand`, `down_procured` (MW). |
 | `get_afrr_capacity_prices(start, end=None, bidding_zones=BIDDING_ZONES, *, include_volumes: bool = False, client=None) -> pd.DataFrame` | *AfrrReservesNordic* (from 2022-12-08); same columns, request filtered to the DK zones. |
 | `get_fcr_n_prices(start, end=None, *, include_volumes: bool = False, client=None) -> pd.DataFrame` | *FcrNdDK2* (from 2021-11-10), `PriceArea = DK2`, `FCR-N`, `Total`; `price`, then `purchased_local`, `purchased_total`. |
 | `get_fcr_d_up_prices(...)` / `get_fcr_d_down_prices(...)` | Same with `ProductName` `FCR-D upp` / `FCR-D ned`. |

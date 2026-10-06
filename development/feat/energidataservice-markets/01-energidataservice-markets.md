@@ -1,6 +1,6 @@
 # Energi Data Service market price endpoints
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -376,6 +376,17 @@ new rather than `Service` (guide 7).
 
 | Check | Result |
 |---|---|
+| `ruff check .` | All checks passed! |
+| `ruff format --check .` | 67 files already formatted |
+| `mypy` | Success: no issues found in 35 source files |
+| `pytest` | 1143 passed (existing suite; tests for the new code are step 5's) |
+| Plan completeness | all 12 Public API rows exist with the planned signatures (checked with `inspect.signature` and against `block_index`/`combine_levels` definitions); no Missing, no Deviation beyond section 3, no Unplanned public surface (`AREA` in `_markets.py` is a module constant of a private module) |
+| `STRUCTURE.md` | auditor's four items applied: `get_mfrr_capacity_prices` row now zone-major `(zone, field)`; `_markets.py` entry rewritten (no private names, names `AREA` and `main()`); Modules sentence wording fixed. The auditor's note on the `reserves.py` Returns docstrings (zone-major order) applied to both capacity functions. Test-file entries for step 5 deliberately not added yet (stop gate flags absent files) |
+| `python -m energydata.utils.frames` | runs offline, shows 6 blocks and combined frame |
+| `python -m energydata.energidataservice._markets` | runs offline, 6 blocks 00/04/.../20 |
+| balancing / reserves showcases | ran live in step 3 and matched the probe; not re-run here (rate limit); form checked: named arguments, call on own line, result named, fixed-set values commented |
+
+---|---|
 | `ruff check .` | |
 | `ruff format --check .` | |
 | `mypy` | |

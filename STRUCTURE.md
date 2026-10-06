@@ -73,7 +73,7 @@ padding, two-level column combining). Tests: `tests/test_retry.py`, `tests/test_
 Energi Data Service endpoints on top of `utils`. Detail lives in
 `.claude/rules/structure-energidataservice.md`, loaded when working in this subpackage.
 Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public names),
-`src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`) and
+`src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`),
 `src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`),
 `src/energydata/energidataservice/_markets.py` (private shared fetch-and-shape path),
 `src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and

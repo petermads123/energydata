@@ -125,7 +125,8 @@ def get_mfrr_capacity_prices(
             returning; a passed client is left open.
 
     Returns:
-        A frame with columns `(zone, "up")` and `(zone, "down")` for each zone, then `(zone, <volume>)` for each volume.
+        A frame with columns `(zone, field)`, zone-major: for each zone `up` and
+            `down`, then each volume when `include_volumes` is true.
 
     Raises:
         ValueError: If `start >= end`, a timestamp is not on a slot boundary, a
@@ -176,7 +177,8 @@ def get_afrr_capacity_prices(
             returning; a passed client is left open.
 
     Returns:
-        A frame with columns `(zone, "up")` and `(zone, "down")` for each zone, then `(zone, <volume>)` for each volume.
+        A frame with columns `(zone, field)`, zone-major: for each zone `up` and
+            `down`, then each volume when `include_volumes` is true.
 
     Raises:
         ValueError: If `start >= end`, a timestamp is not on a slot boundary, a
