@@ -91,7 +91,7 @@ Hourly capacity markets in EUR/MW/h; `include_volumes=True` appends volume colum
 
 ## `src/energydata/energidataservice/pricelist.py`
 
-Reads *DatahubPricelist*, all DKK excl. VAT. Each function makes **one** request filtered on `GLN_Number`, `ChargeType` and `ChargeTypeCode`, from 2014-01-01 to local midnight two days after the period's last local date (the API filters `ValidFrom` by date, ignoring `timezone`), and none for a period ending on or before 2014-01-01. A row is valid on `ValidFrom <= t < ValidTo` (null `ValidTo` open-ended); the latest `ValidFrom` wins, then the earlier code. A `ResolutionDuration` other than `PT1H`/`P1D` (tariffs) or `P1M` (subscriptions) is an `EnergiDataServiceError`. Every function takes `start: TimeLike, end: TimeLike | None = None, *, client: EnergiDataServiceClient | None = None` (a DSO function takes `dso: str` first) and returns `pd.DataFrame` on a `RangeIndex`.
+Reads *DatahubPricelist*, all DKK excl. VAT. Each function makes **one** request filtered on `GLN_Number`, `ChargeType` and `ChargeTypeCode`, from 2014-01-01 to local midnight two days after the period's last local date (the API filters `ValidFrom` by date, ignoring `timezone`), and none for a period ending on or before 2014-01-01. A row is valid on `ValidFrom <= t < ValidTo` (null `ValidTo` open-ended); the latest `ValidFrom` wins, then the earlier code. The fetch also reads `GLN_Number` and `ChargeType`; a record of another GLN, charge type or code, a `ResolutionDuration` other than `PT1H`/`P1D` (tariffs) or `P1M` (subscriptions), or a missing, empty or unparseable `ValidFrom`/`ValidTo` is an `EnergiDataServiceError`. A zoned validity date counts as its Danish local date. A closed passed client is noticed (`RuntimeError`) only when a request is made. Every function takes `start: TimeLike, end: TimeLike | None = None, *, client: EnergiDataServiceClient | None = None` (a DSO function takes `dso: str` first) and returns `pd.DataFrame` on a `RangeIndex`.
 
 | Signature | Description |
 |---|---|
@@ -106,14 +106,25 @@ Module constants: `DATASET`, `ENERGINET_GLN`, `TARIFF` (`"D03"`) and `SUBSCRIPTI
 
 ## Tests
 
-Written at step 5, none touching the network: `tests/test_energidataservice_client.py`,
-`tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`, all on
+Written at step 5, none touching the network: `tests/test_energidataservice_client.py`
+(including the `max_span` override), `tests/test_day_ahead.py`, `tests/test_balancing.py`,
+`tests/test_reserves.py`, `tests/test_pricelist.py` and `tests/test_dsos.py`, all on
 `httpx.MockTransport`; the market suites run on the real records in
-`tests/fixtures/energidataservice_markets.json`. `tests/conftest.py` carries the support: the
+`tests/fixtures/energidataservice_markets.json`, the price-list suites on
+`tests/fixtures/energidataservice_pricelist.json`, a JSON object `{"records", "catalogue"}`:
+`records` is the full history (from 2014) of Energinet's four codes and of six DSOs
+(radius, cerius, konstant-151, n1-131, elinord, hurup), each with `GLN_Number` and
+`ChargeType`; `catalogue` is every distinct (GLN, owner, type, code, note) valid since 2025
+with its `LatestValidTo` (null = open) and no prices, for the completeness test.
+`test_dsos.py` also checks the README's DSO table and the plan's table row by row.
+`tests/conftest.py` carries the support: the
 `markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
 that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
 does, answers 400 for a filter field or column the records lack, notes every request
 (`requests`, read back with `datasets()`, `params(dataset=None)` and `filters(dataset=None)`),
 can ignore the filter (`honour_filter`) or answer with a custom response (`respond`), and
-builds a real client on itself with `client(max_span=timedelta(days=31))`) and the
-`markets_service` fixture.
+builds a real client on itself with `client(max_span=timedelta(days=31))`; for
+`DatahubPricelist` it windows on the *date* of `ValidFrom` against the date part of
+`start`/`end`, `end` exclusive, as the API does), the `markets_service` fixture, the
+`pricelist_fixture` fixture (the price-list file) and the `pricelist_service` fixture (a
+`MarketsService` on its records).

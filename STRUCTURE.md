@@ -82,9 +82,11 @@ prices), `src/energydata/energidataservice/dsos.py` (`Dso`, `DSOS`, the friendly
 `src/energydata/energidataservice/pricelist.py` (DSO and Energinet tariffs and subscriptions, electricity
 tax, from *DatahubPricelist*). Tests:
 `tests/conftest.py` (the autouse no-network guard, the `markets_records` and `markets_service`
-fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
-probe's real records for the seven market datasets), `tests/test_energidataservice_client.py`,
-`tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`.
+fixtures, the `pricelist_fixture` and `pricelist_service` fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
+probe's real records for the seven market datasets), `tests/fixtures/energidataservice_pricelist.json`
+(live price-list history for Energinet and six DSOs, plus a catalogue of every charge since 2025),
+`tests/test_energidataservice_client.py`, `tests/test_day_ahead.py`, `tests/test_balancing.py`,
+`tests/test_reserves.py`, `tests/test_dsos.py` and `tests/test_pricelist.py`.
 
 ## Package: `src/energydata/`
 

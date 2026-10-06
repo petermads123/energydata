@@ -1,6 +1,6 @@
 # Energi Data Service tariffs, subscriptions and elafgift
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -412,7 +412,7 @@ Deviations from the plan (none changes the Public API table or an acceptance cri
 - `client.py` gained a private `_check_span`, shared by the constructor and the `max_span`
   override.
 
-Left for step 5: the fixture fetch (`tests/fixtures/energidataservice_pricelist.json`), the
+Left for step 5 (done there): the fixture fetch (`tests/fixtures/energidataservice_pricelist.json`), the
 `conftest.py` `MarketsService` filter-field mapping and `pricelist_service` fixture, and all
 tests (`test_pricelist.py`, `test_dsos.py`, `max_span` in `test_energidataservice_client.py`).
 `STRUCTURE.md` and the rules file name the new tests only through the rules file's `paths`.
@@ -443,12 +443,49 @@ mapped subscription code `P1M` (104), so no row raises.
 
 ## 5. Test log
 
+Suite: 1735 passed (1484 before this step); `ruff check`, `ruff format --check` and `mypy` clean. The fixture was fetched live (14 requests, one per GLN, charge type and code list, plus the catalogue query) into `tests/fixtures/energidataservice_pricelist.json` as `{"records", "catalogue"}`; the catalogue is the 118k raw D01/D03 rows reduced to 2579 distinct (GLN, owner, type, code, note) valid since 2025, each with `LatestValidTo`. A mutation check (end padding one day, `ValidTo` inclusive, tie sign flipped, hour off by one, `last < _ORIGIN`) fails the suite each time.
+
 | Intent | Test names | Result |
 |---|---|---|
+| T1 | `test_dsos_cover_every_gln_with_a_current_c_consumption_tariff`, `test_every_dso_gln_is_in_the_catalogue_with_a_current_tariff`, `test_every_mapped_code_exists_under_its_gln_and_charge_type`, `test_catalogue_owners_match_the_dso_owner_names`, `test_dsos_keys_are_sorted_lowercase_kebab_and_equal_the_name`, `test_dsos_matches_the_plan_table` (35 rows), `test_dsos_holds_exactly_the_plan_names`, `test_dsos_glns_are_thirteen_digits_and_unique_and_never_energinets`, `test_dsos_codes_are_tuples_of_non_empty_strings`, `test_only_sunds_has_no_subscription_code`, `test_dsos_is_read_only_and_dso_is_frozen`, `test_dsos_codes_may_be_shared_between_dsos_but_not_within_one_gln` | pass |
+| T2 | `test_get_dso_tariffs_hour_n_takes_price_n_plus_one`, `..._radius_evening_peak_is_the_live_checked_value`, `..._prices_every_hour_by_its_wall_clock_hour` (23/25/24 rows), `..._autumn_repeats_hour_two_with_price_three_twice`, `..._season_switch_changes_rows_at_local_midnight`, `..._summer_midnight_on_a_valid_from_day_takes_the_new_row` (lone timestamp and period ending at 01:00), `..._daily_row_fills_every_hour`, `..._follows_the_konstant_code_change`, `..._hour_before_the_first_row_is_nan_and_the_period_is_full`, `..._before_2014_is_all_nan_and_makes_no_request`, `..._touching_2014_makes_one_request`, `..._follows_the_start_and_end_rules` | pass |
+| T3 | `..._latest_valid_from_wins_and_the_older_row_resumes`, `..._valid_to_is_exclusive`, `..._valid_from_is_inclusive`, `..._open_ended_row_covers_the_far_future`, `..._a_none_price_is_nan_and_hides_the_older_row`, `..._a_zero_price_is_zero_not_nan`, `..._equal_valid_from_is_won_by_the_earlier_code` (both response orders), `..._later_valid_from_beats_the_earlier_code`, `..._ignores_the_order_the_service_returns_rows_in`, `test_hourly_functions_reject_an_unsupported_resolution_naming_it_and_the_code`, `test_get_dso_tariffs_frame_has_exactly_the_documented_shape` | pass |
+| T4 | `test_get_energinet_tariffs_keeps_system_and_transmission_apart`, `..._is_one_request_with_both_codes`, `..._columns_are_exact`, `..._on_the_autumn_day_has_25_constant_rows`, `..._changes_value_at_the_year_boundary`, `..._with_one_code_missing_gives_nan_for_it_only`, `..._with_no_rows_at_all_is_all_nan` | pass |
+| T5 | `test_get_energinet_subscriptions_splits_at_the_year_and_clips_the_ends`, `..._a_lone_date_is_one_day_on_the_boundary`, `..._a_lone_timestamp_is_one_hour`, `test_get_dso_subscriptions_one_row_spans_a_request_inside_one_validity`, `..._two_rows_with_the_same_price_stay_two_rows`, `..._a_gap_before_the_first_row_is_a_nan_row`, `..._cover_the_request_without_gaps_or_overlaps`, `..._frame_has_the_documented_dtypes`, `..._sunds_is_one_nan_row_and_no_request`, `test_energinet_subscriptions_before_2014_is_one_nan_row_and_no_request`, `test_subscriptions_an_inner_bounded_row_splits_the_open_row_in_three`, `..._a_zero_length_row_does_not_split_the_period`, `..._a_none_price_is_a_nan_row`, `..._period_edge_on_a_row_boundary_does_not_use_the_old_row`, `test_subscriptions_reject_a_resolution_other_than_monthly` | pass |
+| T6 | `test_get_electricity_tax_changes_on_the_right_local_hour` (2025/26 cut, 2023-07-01 summer cut, lone timestamps in winter and summer, 2022), `test_get_electricity_tax_columns_and_request_are_exact`, `test_the_tax_docstring_says_the_reduced_rate_is_not_published` | pass |
+| T7 | `test_the_fetch_runs_from_2014_to_two_local_days_after_the_last_date` (winter, summer, midnight-exclusive), `test_the_fetch_asks_for_exactly_the_columns_it_reads`, `test_each_function_sends_exactly_its_filter`, `test_get_dso_subscriptions_konstant_requests_d01_and_both_codes`, `test_n1_131_shares_code_cd_and_only_the_charge_type_tells_tariff_from_subscription`, `test_codes_with_special_characters_round_trip_through_the_filter`, `test_a_ten_year_period_is_still_one_request_on_a_31_day_client`, `test_a_long_period_costs_one_request_per_function`, `test_the_max_span_the_functions_use_covers_the_whole_history`; in `test_energidataservice_client.py`: `test_max_span_overrides_the_client_window_for_one_call`, `..._none_keeps_the_client_window`, `..._can_be_smaller_than_the_client_window`, `..._does_not_change_the_client_window_afterwards`, `..._equal_to_the_period_is_one_window_across_a_dst_change`, `..._of_one_minute_is_valid`, `..._that_is_not_positive_whole_minutes_raises_before_any_request` (4), `..._error_names_the_offending_span`, `test_fetch_dataset_max_span_works_on_the_client_loop`; unknown DSO: `test_unknown_dso_raises_listing_every_name_and_makes_no_request` (8 names x 2 functions), `test_a_dso_name_that_is_not_text_raises_value_error`, `test_unknown_dso_with_an_owned_client_never_creates_one`, `test_dso_name_is_case_insensitive`; client: `test_an_owned_client_is_created_used_and_closed` (5 functions), `..._closed_when_the_service_refuses`, `..._closed_when_a_row_is_malformed`, `test_a_passed_client_is_left_open` (5), `test_calling_twice_on_one_client_gives_equal_frames`, `test_a_closed_passed_client_raises_runtime_error_when_a_request_is_needed` (5), `test_a_closed_passed_client_goes_unnoticed_when_no_request_is_needed`, `test_the_functions_work_inside_a_running_event_loop` | pass |
+| T8 | `test_each_docstring_names_dataset_codes_unit_resolution_and_format` (5), `test_each_docstring_has_args_returns_and_raises` (5), `test_the_dso_docstrings_say_the_name_is_case_insensitive`, `test_the_subscription_docstring_names_sunds_and_the_missing_request`, `test_the_package_reexports_the_public_names`, `test_readme_lists_every_dso_with_its_gln_and_codes`, `test_readme_names_the_five_functions_dataset_and_units`, `test_a_real_client_cannot_reach_the_network_in_tests`, `test_main_prints_each_showcase_against_a_stub`, `test_main_prints_every_name_and_gln` | pass |
+
+Bugs the tests and designers found, and what was done (all fixed in `pricelist.py`; no public signature changed):
+
+- An empty or `"NaT"` `ValidFrom`/`ValidTo` parsed to `NaT`, so a row silently covered nothing (or, for `ValidTo`, vanished). `_local` now raises `EnergiDataServiceError`; tests `test_a_malformed_row_raises_instead_of_being_priced` (12 cases).
+- `_rows` matched on code only, so a service ignoring the filter could mix DSOs that share a code (`C-Tarif`, `41100`, `E-50`, `CD` as tariff and subscription). The fetch now also reads `GLN_Number` and `ChargeType`, and `_rows(records, gln, charge_type, codes, resolutions)` refuses a record of another GLN or type. The request's `columns` gained those two fields (the plan said "the needed fields"). Tests: `test_tariffs_reject_a_record_of_another_gln_that_shares_the_code`, `..._a_subscription_record_that_shares_the_code`, `test_subscriptions_reject_a_tariff_record_that_shares_the_code`.
+- `_dso(None)` and other non-text names raised `AttributeError`; now `ValueError` naming the value (`test_a_dso_name_that_is_not_text_raises_value_error`).
+- A zoned `ValidFrom`/`ValidTo` (`"2026-01-01T00:00:00Z"`) was converted but not snapped to local midnight, so it started at 01:00 local; it now counts as its Danish local date (`test_a_zoned_valid_from_counts_as_its_local_date`). The API sends naive dates, so this is defensive.
+
+Wrong expectations corrected in the tests: Midtfyns' `ChargeOwner` is spelled with a double space in the price list, so the owner check compares whitespace-normalised (the `owner` field is informational and the plan table was approved with one space); and a design-brief expectation that the request's `start` is `2014-01-01` is `2013-12-31T23:00` on the wire (local midnight in UTC), asserted as such.
+
+Contradictions from the designers, applied or rebutted:
+
+1. Empty/`NaT` validity strings: applied, above.
+2. Aware validity dates not normalised: applied, above.
+3. Matching on code only: applied, above.
+4. `_dso(non-str)`: applied, above.
+5. Flex/time note tie-break not implemented: already a recorded deviation (section 3); no test written; step 6 to read it as a plan-text versus code difference.
+6. Closed passed client unnoticed when no request is made (`sunds`, a period before 2014): documented rather than changed. Every public docstring's `Raises:` now says `RuntimeError` only "if a request is needed", the rules file says so, and `test_a_closed_passed_client_goes_unnoticed_when_no_request_is_needed` pins it.
+7. Konstant tie-break favours the retired code: rebutted. The data has no equal-`ValidFrom` pair within any mapped code (checked at step 2 and again on the fixture: `151-NT01T` and `C_FBTNTR_B` overlap in March 2026 with different `ValidFrom`s, so the later wins, and the two carry equal prices there); the tie is a latent case only and its resolution by code order is pinned (`test_get_dso_tariffs_equal_valid_from_is_won_by_the_earlier_code`). Not worth a `DEVELOPMENT.md` entry.
+8. `start` is `2013-12-31T23:00` on the wire: wording only, see above.
+9. "One row per validity period" versus identical prices: checked against the fixture. Radius' 2025-12-01 to 2026-02-01 is one row (its row runs 2024-12-01 to 2026-04-01), so the live check stands; and Radius 2023 and 2024-01..07 hold two rows of 44.75, which stay two rows, pinned by `test_get_dso_subscriptions_two_rows_with_the_same_price_stay_two_rows`.
+10. Two `EnergiDataServiceError` branches not named in `Raises:`: `_load`'s `Raises:` now names the foreign record and the bad validity dates; the public docstrings keep "unexpected payload".
 
 Edge cases considered and deliberately skipped, with reasons:
 
----
+- Very long strings and non-ASCII beyond the DSO names: nothing branches on length; `læsø` and the special-character codes (`TCL<100_02`, `FE1 NT-01`) are covered.
+- Mutation of arguments: every argument is immutable; `DSOS` read-only-ness and the mock's data staying untouched are covered.
+- Float precision beyond equality: prices go through `float()`; compared exactly where the fixture value is a literal and with `pytest.approx` for the 6-digit subscription prices.
+- Konstant-245 and the other 29 DSOs' history: the fixture holds six DSOs on purpose; the other DSOs share the code path and are covered by the plan-table and catalogue tests.
+- The Flex/time note tie-break: not implemented (recorded deviation), so untestable.
+- `Note`-based filtering and the live API's server-side behaviour: the mock reproduces the observed date-cut semantics; the live check is step 3's.
 
 ## 6. Concept check
 
