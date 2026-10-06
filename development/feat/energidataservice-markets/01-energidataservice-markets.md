@@ -117,7 +117,7 @@ Assumptions:
 |---|---|
 | A1 | Exposes `get_imbalance_prices`, `get_mfrr_capacity_prices`, `get_mfrr_energy_prices`, `get_afrr_capacity_prices`, `get_afrr_energy_prices`, `get_fcr_n_prices`, `get_fcr_d_up_prices`, `get_fcr_d_down_prices`, `get_fcr_dk1_prices` and `get_ffr_prices`, each returning a DataFrame with a tz-aware `Europe/Copenhagen` index covering exactly `[start, end)`, with the same `start`/`end` rules as day-ahead (naive = Danish time, lone date = whole day, lone timestamp = one slot at the function's resolution, exclusive end, `ValueError` naming the value). |
 | A2 | Resolution follows the market: imbalance, aFRR energy and mFRR energy are 15-minute; mFRR capacity, aFRR capacity, FCR-N, FCR-D up/down and FFR are hourly and not forward-filled; FCR DK1 is indexed by its 4-hour blocks in Danish time (00, 04, …, 20). |
-| A3 | Imbalance, aFRR energy, mFRR energy, mFRR capacity and aFRR capacity take `bidding_zones` (`DK1`/`DK2`, both by default, order kept) and return columns with zone on top and `up`/`down` below: imbalance repeats its single price in both, aFRR energy is the volume-weighted up/down price, mFRR energy the SA marginal price; zones other than DK1/DK2 are dropped; a direction a zone does not procure is a NaN column. |
+| A3 | Imbalance, aFRR energy, mFRR energy, mFRR capacity and aFRR capacity take `bidding_zones` (`DK1`/`DK2`, both by default, order kept) and return columns with zone on top and `up`/`down` below: imbalance repeats its single price in both, aFRR energy is the volume-weighted up/down price and is NaN in a slot where that direction's activated aFRR MW is 0 (the API publishes 0.0 there), mFRR energy the SA marginal price as published; zones other than DK1/DK2 are dropped. Capacity prices are returned as published, 0.0 included; a direction or zone with no record or a null value is NaN. |
 | A4 | FCR-N, FCR-D up, FCR-D down and FFR (DK2 only) take no zone argument and return a `price` column — for FCR the auctions' `Total`; FCR DK1 takes no zone argument and returns `cross_border` and `danish` columns. |
 | A5 | Prices are in EUR: EUR/MWh for imbalance and the energy markets, EUR/MW/h for the capacity markets. |
 | A6 | Capacity functions take `include_volumes=False`; when true, the dataset's volume fields are added as further columns in MW (demand and procured per direction for mFRR/aFRR; purchased local and total for FCR-N/D; domestic and abroad for FCR DK1; demand and purchased for FFR). |
@@ -127,6 +127,16 @@ Assumptions:
 ### Open questions
 
 None.
+
+### Amendments
+
+- **2026-10-06, before step 5 — user decisions.** The test designers found that the real
+  data contradicts two readings of A3. (1) An aFRR direction with no activation is
+  published as price 0.0 with 0 MW: the user chose NaN where the matching activated MW is
+  0. (2) Capacity directions with nothing procured are published as 0.0, and DK1 mFRR down
+  is in fact procured today, so "a direction a zone does not procure is a NaN column" no
+  longer describes the data: the user chose to return capacity prices as published,
+  NaN only where the API has no record or a null. A3 is rewritten accordingly.
 
 ---
 
