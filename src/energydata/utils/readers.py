@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import struct
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -22,6 +23,16 @@ type Parsed = JsonValue | ET.Element | list[dict[str, str]] | dict[str, Parsed] 
 
 _CSV_DELIMITERS = ",;\t"
 _SNIFF_BYTES = 4096
+_ZIP_ERRORS = (
+    zipfile.BadZipFile,
+    RuntimeError,
+    NotImplementedError,
+    zlib.error,
+    EOFError,
+    OSError,
+    ValueError,
+    struct.error,
+)
 
 
 class ParseError(ValueError):
@@ -74,11 +85,12 @@ def read_xml(data: bytes) -> ET.Element:
         The root element.
 
     Raises:
-        ParseError: If the data is empty or malformed.
+        ParseError: If the data is empty or malformed, or declares an encoding
+            Python does not know.
     """
     try:
         return ET.fromstring(data)
-    except ET.ParseError as error:
+    except (ET.ParseError, LookupError) as error:
         raise ParseError("xml", str(error)) from error
 
 
@@ -98,8 +110,9 @@ def read_csv(
         lines are skipped.
 
     Raises:
-        ParseError: If the encoding is unknown, the bytes do not decode, a header
-            name repeats, or a row has more or fewer fields than the header.
+        ParseError: If the encoding is unknown, the bytes do not decode, the
+            delimiter is not one character, a header name repeats, a quoted field
+            is not closed, or a row has more or fewer fields than the header.
     """
     try:
         text = data.decode(encoding)
@@ -108,10 +121,14 @@ def read_csv(
     except UnicodeDecodeError as error:
         raise ParseError("csv", f"cannot decode as {encoding}: {error}") from error
     separator = delimiter if delimiter is not None else _sniff_delimiter(text)
+    if len(separator) != 1:
+        raise ParseError("csv", f"delimiter must be one character, got {separator!r}")
     rows: list[dict[str, str]] = []
     header: list[str] | None = None
     try:
-        reader = csv.reader(io.StringIO(text, newline=""), delimiter=separator)
+        reader = csv.reader(
+            io.StringIO(text, newline=""), delimiter=separator, strict=True
+        )
         for number, fields in enumerate(reader, start=1):
             if not fields:
                 continue
@@ -161,7 +178,7 @@ def read_zip(data: bytes) -> dict[str, Parsed]:
     """
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as error:
+    except _ZIP_ERRORS as error:
         raise ParseError("zip", str(error)) from error
     members: dict[str, Parsed] = {}
     with archive:
@@ -172,14 +189,7 @@ def read_zip(data: bytes) -> dict[str, Parsed]:
             fmt = format_from_filename(name)
             try:
                 content = archive.read(info)
-            except (
-                zipfile.BadZipFile,
-                RuntimeError,
-                NotImplementedError,
-                zlib.error,
-                EOFError,
-                OSError,
-            ) as error:
+            except _ZIP_ERRORS as error:
                 raise ParseError("zip", f"member {name!r}: {error}") from error
             if fmt is None:
                 members[name] = content
@@ -285,8 +295,11 @@ def read_response(response: httpx.Response, fmt: Format | None = None) -> Parsed
             raise ParseError(
                 None, f"cannot tell the format from Content-Type {content_type!r}"
             )
-    if fmt == "csv" and response.charset_encoding is not None:
-        return read_csv(response.content, encoding=response.charset_encoding)
+    charset = response.charset_encoding
+    if fmt == "csv" and charset is not None:
+        if charset.lower().replace("_", "-") in ("utf-8", "utf8"):
+            charset = "utf-8-sig"  # as for read_csv's default: a BOM is not data
+        return read_csv(response.content, encoding=charset)
     return read_bytes(response.content, fmt)
 
 

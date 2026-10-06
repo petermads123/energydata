@@ -54,16 +54,18 @@ class RetryPolicy:
             raise ValueError(
                 f"max_attempts must be at least 1, got {self.max_attempts}"
             )
-        if not self.base_delay >= 0:
-            raise ValueError(f"base_delay must be non-negative, got {self.base_delay}")
-        if not self.max_delay >= self.base_delay:
+        if not 0 <= self.base_delay < math.inf:
             raise ValueError(
-                f"max_delay must be at least base_delay ({self.base_delay}), "
+                f"base_delay must be finite and non-negative, got {self.base_delay}"
+            )
+        if not self.base_delay <= self.max_delay < math.inf:
+            raise ValueError(
+                f"max_delay must be finite and at least base_delay ({self.base_delay}), "
                 f"got {self.max_delay}"
             )
-        if not self.max_holdoff >= 0:
+        if not 0 <= self.max_holdoff < math.inf:
             raise ValueError(
-                f"max_holdoff must be non-negative, got {self.max_holdoff}"
+                f"max_holdoff must be finite and non-negative, got {self.max_holdoff}"
             )
 
 

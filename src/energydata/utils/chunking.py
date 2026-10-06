@@ -30,7 +30,7 @@ def date_windows(
     for name, value in (("start", start), ("end", end)):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{name} must be timezone-aware, got {value!r}")
-    if start >= end:
+    if start.astimezone(UTC) >= end.astimezone(UTC):  # elapsed time, not wall clock
         raise ValueError(f"start must be before end, got start={start!r}, end={end!r}")
     if span <= timedelta(0):
         raise ValueError(f"span must be positive, got {span!r}")
