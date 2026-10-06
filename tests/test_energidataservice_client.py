@@ -198,6 +198,100 @@ def test_client_windows_are_fetched_concurrently_but_capped() -> None:
     assert state["peak"] == 2
 
 
+# --- max_span override ----------------------------------------------------------
+
+
+def test_max_span_overrides_the_client_window_for_one_call() -> None:
+    seen, handler = _recorder()
+    with _client(handler, max_span=DAY) as client:
+        client.get_dataset("X", START, START + 10 * DAY, max_span=10 * DAY)
+
+    assert len(seen) == 1
+    assert seen[0].url.params["end"] == "2025-01-24T23:00"
+
+
+def test_max_span_none_keeps_the_client_window() -> None:
+    seen, handler = _recorder()
+    with _client(handler, max_span=DAY) as client:
+        client.get_dataset("X", START, START + 10 * DAY, max_span=None)
+
+    assert len(seen) == 10
+
+
+def test_max_span_can_be_smaller_than_the_client_window() -> None:
+    seen, handler = _recorder()
+    with _client(handler, max_span=10 * DAY) as client:
+        client.get_dataset("X", START, START + 4 * DAY, max_span=DAY)
+
+    assert len(seen) == 4
+
+
+def test_max_span_does_not_change_the_client_window_afterwards() -> None:
+    seen, handler = _recorder()
+    with _client(handler, max_span=DAY) as client:
+        client.get_dataset("X", START, START + 3 * DAY, max_span=3 * DAY)
+        client.get_dataset("X", START, START + 3 * DAY)
+
+    assert len(seen) == 1 + 3
+
+
+def test_max_span_equal_to_the_period_is_one_window_across_a_dst_change() -> None:
+    seen, handler = _recorder()
+    start = datetime(2026, 3, 1, tzinfo=CPH)
+    end = datetime(2026, 4, 1, tzinfo=CPH)  # wall-clock span, one hour short in UTC
+    with _client(handler, max_span=DAY) as client:
+        client.get_dataset("X", start, end, max_span=end - start)
+
+    assert len(seen) == 1
+
+
+def test_max_span_of_one_minute_is_valid() -> None:
+    seen, handler = _recorder()
+    with _client(handler) as client:
+        client.get_dataset(
+            "X", START, START + timedelta(minutes=3), max_span=timedelta(minutes=1)
+        )
+
+    assert len(seen) == 3
+
+
+@pytest.mark.parametrize(
+    "span",
+    [
+        timedelta(0),
+        timedelta(days=-1),
+        timedelta(seconds=30),
+        timedelta(minutes=1, seconds=1),
+    ],
+)
+def test_max_span_that_is_not_positive_whole_minutes_raises_before_any_request(
+    span: timedelta,
+) -> None:
+    seen, handler = _recorder()
+    with _client(handler) as client, pytest.raises(ValueError, match="max_span"):
+        client.get_dataset("X", START, START + DAY, max_span=span)
+
+    assert seen == []
+
+
+def test_max_span_error_names_the_offending_span() -> None:
+    with _client(_empty) as client, pytest.raises(ValueError, match="seconds=30"):
+        client.get_dataset("X", START, START + DAY, max_span=timedelta(seconds=30))
+
+
+def test_fetch_dataset_max_span_works_on_the_client_loop() -> None:
+    seen, handler = _recorder()
+
+    async def main_() -> list[Any]:
+        return await client.fetch_dataset("X", START, START + 5 * DAY, max_span=5 * DAY)
+
+    with _client(handler, max_span=DAY) as client:
+        records = client.run(main_)
+
+    assert len(seen) == 1
+    assert len(records) == 1
+
+
 # --- payload checks -----------------------------------------------------------
 
 

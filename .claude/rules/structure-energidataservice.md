@@ -5,6 +5,8 @@ paths:
   - "tests/test_day_ahead.py"
   - "tests/test_balancing.py"
   - "tests/test_reserves.py"
+  - "tests/test_pricelist.py"
+  - "tests/test_dsos.py"
   - "tests/fixtures/**"
   - "tests/conftest.py"
 ---
@@ -13,7 +15,7 @@ paths:
 
 Energi Data Service endpoints. Every call to the service goes through
 `EnergiDataServiceClient`. `__init__.py` re-exports `EnergiDataServiceClient`,
-`EnergiDataServiceError`, `Record`, `get_day_ahead_prices` and the ten market price functions below. Every module has a `main()`
+`EnergiDataServiceError`, `Record`, `get_day_ahead_prices`, the ten market price functions, `Dso`, `DSOS` and the five price-list functions below. Every module has a `main()`
 showcase; the ones here call the live API.
 
 ## `src/energydata/energidataservice/client.py`
@@ -24,8 +26,8 @@ showcase; the ones here call the live API.
 | `type Record = dict[str, JsonValue]` | One dataset row. |
 | `EnergiDataServiceError(Exception)` | Payload that is not a JSON object, has no `records` list, has a record that is not a JSON object, or has fewer records than its `total`. |
 | `EnergiDataServiceClient(*, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, max_span: timedelta = timedelta(days=31), transport: httpx.AsyncBaseTransport \| None = None)` | `ApiClient` on `BASE_URL`. A `max_span` that is not a positive whole number of minutes, or `max_concurrency < 1`, is a `ValueError`. |
-| `async EnergiDataServiceClient.fetch_dataset(dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently; params `start`/`end` (UTC `YYYY-MM-DDTHH:MM`), `timezone=UTC`, `limit=0`, `filter` (compact JSON), `columns`, `sort`. Records concatenated in window order. `ValueError` for a naive bound, a bound with seconds (the API takes whole minutes) or `start >= end`. Only awaitable on the client's loop. |
-| `EnergiDataServiceClient.get_dataset(dataset: str, start: datetime, end: datetime, *, filters=None, columns=None, sort_by=None) -> list[Record]` | The sync form, through `run`. |
+| `async EnergiDataServiceClient.fetch_dataset(dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None, max_span: timedelta \| None = None) -> list[Record]` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently; params `start`/`end` (UTC `YYYY-MM-DDTHH:MM`), `timezone=UTC`, `limit=0`, `filter` (compact JSON), `columns`, `sort`. Records concatenated in window order. `max_span`, when given, replaces the client's window size for this call under the same validation. `ValueError` for a naive bound, a bound with seconds (the API takes whole minutes) or `start >= end`. Only awaitable on the client's loop. |
+| `EnergiDataServiceClient.get_dataset(dataset: str, start: datetime, end: datetime, *, filters=None, columns=None, sort_by=None, max_span=None) -> list[Record]` | The sync form, through `run`. |
 | `main() -> None` | Showcase (live API). |
 
 ## `src/energydata/energidataservice/day_ahead.py`
@@ -79,16 +81,50 @@ Hourly capacity markets in EUR/MW/h; `include_volumes=True` appends volume colum
 | `get_ffr_prices(start, end=None, *, include_volumes: bool = False, client=None) -> pd.DataFrame` | *FfrDK2* (from 2021-04-26), hourly; `price`, then `demand`, `purchased`. |
 | `main() -> None` | Showcase (live API). |
 
+## `src/energydata/energidataservice/dsos.py`
+
+| Signature | Description |
+|---|---|
+| `Dso(name: str, owner: str, gln: str, tariff_codes: tuple[str, ...], subscription_codes: tuple[str, ...])` | Frozen dataclass: a DSO's friendly name, `ChargeOwner`, GLN and the `ChargeTypeCode`s of its standard C consumption tariff (`D03`) and subscription (`D01`), in order of precedence; subscription codes are empty when it publishes none. |
+| `DSOS: Mapping[str, Dso]` | The 35 supported DSOs by lowercase friendly name, sorted, read-only (`MappingProxyType`). The same table is in the README. |
+| `main() -> None` | Offline showcase: prints the table. |
+
+## `src/energydata/energidataservice/pricelist.py`
+
+Reads *DatahubPricelist*, all DKK excl. VAT. Each function makes **one** request filtered on `GLN_Number`, `ChargeType` and `ChargeTypeCode`, from 2014-01-01 to local midnight two days after the period's last local date (the API filters `ValidFrom` by date, ignoring `timezone`), and none for a period ending on or before 2014-01-01. A row is valid on `ValidFrom <= t < ValidTo` (null `ValidTo` open-ended); the latest `ValidFrom` wins, then the earlier code. The fetch also reads `GLN_Number` and `ChargeType`; a record of another GLN, charge type or code, a `ResolutionDuration` other than `PT1H`/`P1D` (tariffs) or `P1M` (subscriptions), a missing `ValidFrom`, a non-text, empty or unparseable `ValidFrom`/`ValidTo` (a missing or null `ValidTo` is open-ended), or a non-numeric price is an `EnergiDataServiceError`. A zoned validity date counts as its Danish local date. A closed passed client is noticed (`RuntimeError`) only when a request is made. Every function takes `start: TimeLike, end: TimeLike | None = None, *, client: EnergiDataServiceClient | None = None` (a DSO function takes `dso: str` first) and returns `pd.DataFrame` on a `RangeIndex`.
+
+| Signature | Description |
+|---|---|
+| `get_dso_tariffs(dso, start, end=None, *, client=None) -> pd.DataFrame` | Hourly `start`, `end`, `tariff` (DKK/kWh) from the DSO's C tariff codes. `dso` case-insensitive; unknown is a `ValueError` listing `sorted(DSOS)`. A `PT1H` row gives `Price{local hour + 1}`, a `P1D` row `Price1`; no row or a null price is NaN. |
+| `get_energinet_tariffs(start, end=None, *, client=None) -> pd.DataFrame` | Hourly `start`, `end`, `system_tariff` (41000), `transmission_tariff` (40000); one request. |
+| `get_dso_subscriptions(dso, start, end=None, *, client=None) -> pd.DataFrame` | One row per validity stretch: `start`, `end` (clipped), `subscription` (DKK/month); a gap is a NaN row. A DSO with no subscription code gives one NaN row and no request. |
+| `get_energinet_subscriptions(start, end=None, *, client=None) -> pd.DataFrame` | The same from code 41004. |
+| `get_electricity_tax(start, end=None, *, client=None) -> pd.DataFrame` | Hourly `start`, `end`, `electricity_tax` (EA-001, normal rate, DKK/kWh); the reduced electric-heating rate is not published in the dataset. |
+| `main() -> None` | Showcase (live API). |
+
+Module constants: `DATASET`, `ENERGINET_GLN`, `TARIFF` (`"D03"`) and `SUBSCRIPTION` (`"D01"`).
+
 ## Tests
 
-Written at step 5, none touching the network: `tests/test_energidataservice_client.py`,
-`tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`, all on
+Written at step 5, none touching the network: `tests/test_energidataservice_client.py`
+(including the `max_span` override), `tests/test_day_ahead.py`, `tests/test_balancing.py`,
+`tests/test_reserves.py`, `tests/test_pricelist.py` and `tests/test_dsos.py`, all on
 `httpx.MockTransport`; the market suites run on the real records in
-`tests/fixtures/energidataservice_markets.json`. `tests/conftest.py` carries the support: the
+`tests/fixtures/energidataservice_markets.json`, the price-list suites on
+`tests/fixtures/energidataservice_pricelist.json`, a JSON object `{"records", "catalogue"}`:
+`records` is the full history (from 2014) of Energinet's four codes and of six DSOs
+(radius, cerius, konstant-151, n1-131, elinord, hurup), each with `GLN_Number` and
+`ChargeType`; `catalogue` is every distinct (GLN, owner, type, code, note) valid since 2025
+with its `LatestValidTo` (null = open) and no prices, for the completeness test.
+`test_dsos.py` also checks `DSOS` row by row against an independent copy of the table agreed at the plan gate, and the README's DSO table against `DSOS`.
+`tests/conftest.py` carries the support: the
 `markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
 that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
 does, answers 400 for a filter field or column the records lack, notes every request
 (`requests`, read back with `datasets()`, `params(dataset=None)` and `filters(dataset=None)`),
 can ignore the filter (`honour_filter`) or answer with a custom response (`respond`), and
-builds a real client on itself with `client(max_span=timedelta(days=31))`) and the
-`markets_service` fixture.
+builds a real client on itself with `client(max_span=timedelta(days=31))`; for
+`DatahubPricelist` it windows on the *date* of `ValidFrom` against the date part of
+`start`/`end`, `end` exclusive, as the API does), the `markets_service` fixture, the
+`pricelist_fixture` fixture (the price-list file) and the `pricelist_service` fixture (a
+`MarketsService` on its records).

@@ -33,10 +33,6 @@ by heading is updated in the same change.
 - **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
   private helper from `utils/chunking.py` for the lowest-index re-raise rule; make it public
   (with a `structure-utils.md` row) when a second caller needs it.
-- **Tariffs, subscriptions and elafgift are next.** The market endpoints shipped on
-  `feat/energidataservice-markets`; on a new branch from `main` build tariffs,
-  subscriptions and elafgift (*DatahubPricelist*, DSO mapping). Spec:
-  `ideas/energydata/energidataservice-datasets.md`.
 
 ## `feat/energidataservice-markets` round 1 (2026-10-06)
 
@@ -50,3 +46,10 @@ by heading is updated in the same change.
   read all ten docstrings and README rows instead. A test like `test_day_ahead`'s
   docstring/README check would pin them.
 
+## `feat/energidataservice-tariffs` round 1 (2026-10-06)
+
+- **Pre-2025 DSO codes are unmapped.** `DSOS` was built from 2025-2027 price-list rows. A DSO
+  that used a different tariff or subscription code before 2025 returns NaN for those years
+  (Radius `DT_C_01` reaches back to 2017 and is unaffected). Likewise a DSO that changes a
+  code in future goes NaN visibly until `dsos.py` is updated; refreshing the fixture's
+  catalogue and the completeness test catches it.

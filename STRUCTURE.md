@@ -40,7 +40,7 @@ here, but everything in this file is in context every session.
 src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
-    energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices
+    energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -76,13 +76,17 @@ Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public n
 `src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`),
 `src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`),
 `src/energydata/energidataservice/_markets.py` (private shared fetch-and-shape path),
-`src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and
+`src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices),
 `src/energydata/energidataservice/reserves.py` (mFRR/aFRR capacity, FCR-N, FCR-D, FCR DK1, FFR
-prices). Tests:
+prices), `src/energydata/energidataservice/dsos.py` (`Dso`, `DSOS`, the friendly-name DSO table) and
+`src/energydata/energidataservice/pricelist.py` (DSO and Energinet tariffs and subscriptions, electricity
+tax, from *DatahubPricelist*). Tests:
 `tests/conftest.py` (the autouse no-network guard, the `markets_records` and `markets_service`
-fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
-probe's real records for the seven market datasets), `tests/test_energidataservice_client.py`,
-`tests/test_day_ahead.py`, `tests/test_balancing.py` and `tests/test_reserves.py`.
+fixtures, the `pricelist_fixture` and `pricelist_service` fixtures and the `MarketsService` mock), `tests/fixtures/energidataservice_markets.json` (the
+probe's real records for the seven market datasets), `tests/fixtures/energidataservice_pricelist.json`
+(live price-list history for Energinet and six DSOs, plus a catalogue of every charge since 2025),
+`tests/test_energidataservice_client.py`, `tests/test_day_ahead.py`, `tests/test_balancing.py`,
+`tests/test_reserves.py`, `tests/test_dsos.py` and `tests/test_pricelist.py`.
 
 ## Package: `src/energydata/`
 
