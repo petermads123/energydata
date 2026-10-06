@@ -156,7 +156,22 @@ All of it lives in one new module, `energidataservice/pricelist.py`. The DSO tab
 
 Because `ValidFrom` is the API's filter column, a `start` filter would drop a row that began
 before the period and is still valid. So the fetch asks for everything from the dataset's
-first date (2014-01-01) up to the period's end, in **one** request. That is cheap because the
+first date (2014-01-01) up to the period's end, in **one** request.
+
+**Observed filter semantics (live, 2026-10-06).** The API filters `ValidFrom` by date. Both
+`start` and `end` are cut to their date part, `end` is exclusive, and `timezone` makes no
+difference:
+- `start=2026-01-01T00:00, end=2026-01-01T01:00` returns nothing for a row with `ValidFrom`
+  2026-01-01;
+- `start=2026-01-01, end=2026-01-02` returns that row.
+
+The client sends UTC timestamps, so the fetch's end bound is set to **local midnight two days
+after the period's last local date**. This can never cut off a row that starts on the
+period's last day; the row picker discards the extra rows. A period ending on or before
+2014-01-01 makes no request and returns the all-NaN frame.
+
+Records come back with `ValidFrom`/`ValidTo` as naive local Danish midnights
+(`2026-01-01T00:00:00`), whatever `timezone` is. That is cheap because the
 filter cuts it to tens of rows. To do this, `EnergiDataServiceClient.fetch_dataset` and
 `get_dataset` gain one optional keyword, `max_span: timedelta | None = None`. It overrides the
 client's window size for that call. The change is additive: existing calls are unchanged.
@@ -182,7 +197,7 @@ Rejected:
 | `src/energydata/energidataservice/client.py` | changed | `fetch_dataset`/`get_dataset` gain keyword `max_span: timedelta \| None = None`. |
 | `src/energydata/energidataservice/__init__.py` | changed | Re-exports `Dso`, `DSOS` and the five functions. |
 | `tests/fixtures/energidataservice_pricelist.json` | new | Fetched live during the build. It has two parts: full-history rows for Energinet's four codes and for six DSOs (Radius, Cerius, Konstant-151, N1-131, Elinord, Hurup); and a *catalogue* of every distinct (GLN, ChargeOwner, ChargeType, ChargeTypeCode, Note) since 2025 for the completeness test. No prices are in the catalogue. |
-| `tests/conftest.py` | changed | A `pricelist_service` fixture: a `MockTransport` that serves fixture rows filtered by `filter` JSON, by `start`/`end` on `ValidFrom`, and by `columns`, as the API does. |
+| `tests/conftest.py` | changed | `MarketsService` gains a per-dataset filter-field mapping. `DatahubPricelist` filters on `ValidFrom`, comparing its date against the date part of the `start`/`end` strings (end exclusive), as the API does; the existing datasets keep their time fields. A `pricelist_service` fixture wraps it with the pricelist records. There is no second mock. |
 | `tests/test_pricelist.py`, `tests/test_dsos.py` | new | One suite per new module. `tests/test_energidataservice_client.py` is extended for `max_span`. |
 | `README.md` | changed | Five endpoint rows and the DSO name table. |
 | `STRUCTURE.md`, `.claude/rules/structure-energidataservice.md` | changed | New modules (full paths), signatures, test files and the fixture. |
@@ -191,8 +206,16 @@ Rejected:
 ### The DSO table (for the user to check)
 
 These codes were chosen from the live price list (2025–2027 rows). Where a DSO publishes
-two C codes with identical prices, the first is taken. Code lists are tried in order, and on
-overlap the latest `ValidFrom` wins.
+two C codes with identical prices, the first is taken. A DSO's code list is fetched together.
+On overlap the latest `ValidFrom` wins; on an equal `ValidFrom`, the earlier code in the
+list wins, then the row whose note has no "Flex"/"time". The data has no equal-`ValidFrom`
+pairs within any mapped code (checked).
+
+Same-code notes vary over time: `5NCFF`, `TNT15000`, `AAL-NT-05`, `NT-C`, `151-NT01T` and
+`E-51` sometimes say "Flex" or "time". The prices are the code's own, so the label is not
+filtered on. Midtfyns' `TNT15000` (sometimes labelled Flex) and `TNT15001` (sometimes
+labelled Time) carry identical prices in every month of 2025–2026, and so do `AB15000` and
+`AB15001` in 2026.
 
 | Name | DSO (ChargeOwner) | GLN | C tariff code(s) | C subscription code(s) |
 |---|---|---|---|---|
@@ -270,7 +293,11 @@ Shared behaviour:
 2. **`dsos.py`.** Write `Dso` and `DSOS` from the table above, exactly. The showcase prints
    the names and GLNs.
 3. **`pricelist.py`, private helpers:**
-   - `_fetch(client, gln, codes, charge_type, last)`: calls `fetch_dataset("DatahubPricelist", 2014-01-01 local, last, filters={"GLN_Number":[gln], "ChargeType":[charge_type], "ChargeTypeCode":list(codes)}, columns=[...the needed fields...], sort_by="ValidFrom", max_span=last - origin)`.
+   - `_fetch(client, gln, codes, charge_type, last)`: calls `fetch_dataset("DatahubPricelist", origin, fetch_end, filters={"GLN_Number":[gln], "ChargeType":[charge_type], "ChargeTypeCode":list(codes)}, columns=[...the needed fields...], sort_by="ValidFrom", max_span=fetch_end - origin)`. Here `origin` is 2014-01-01 local and `fetch_end` is local midnight two days after `last`'s local date (see the observed semantics above). When `last <= origin`, it skips the request.
+   - **Charge types:** the DSO tariff and Energinet 41000, 40000 and EA-001 are `D03`; the
+     DSO subscription and Energinet 41004 are `D01`.
+   - A row whose `ResolutionDuration` is not `PT1H`/`P1D` (tariffs) or `P1M`
+     (subscriptions) raises `EnergiDataServiceError` naming the value and the code.
    - `_rows(records)`: parses `ValidFrom`/`ValidTo` as local dates (`Europe/Copenhagen`
      midnight), with `ValidTo` null meaning +∞.
    - `_hourly(rows, index)`: for each slot, picks the active row (latest `ValidFrom` among
@@ -291,9 +318,10 @@ Shared behaviour:
    - **Rows:** filter by GLN and code for Energinet (41000, 40000, 41004, EA-001), and for
      radius, cerius, konstant-151, n1-131, elinord and hurup with their mapped codes, from
      2014.
-   - **Catalogue:** distinct GLN/owner/type/code/note since 2025, built from a
-     `columns=`-trimmed query.
-   - Save both to `tests/fixtures/energidataservice_pricelist.json`, one record per line.
+   - **Catalogue:** distinct GLN/owner/type/code/note since 2025, each with its latest
+     `ValidTo` (null = open), built from a `columns=`-trimmed query.
+   - Save both to `tests/fixtures/energidataservice_pricelist.json` as a JSON object
+     `{"records": [...], "catalogue": [...]}`, in the same shape the markets fixture uses.
 7. **Tests**, per the intents below.
 8. **Live check.** Run the `pricelist` showcase and spot-check that Radius 2026-10-15 18:00
    equals that row's `Price19`, and that Energinet 2026 gives system 0.072 and transmission
@@ -303,13 +331,13 @@ Shared behaviour:
 
 | # | Must prove | Covers |
 |---|---|---|
-| T1 | `DSOS` completeness against the catalogue. Every GLN with a current C consumption tariff (a note matching `Nettarif C`/`C-Kunde` that is not a discount, production, feed-in, availability or regional row, plus Hurup's 0-100000 kWh tariff) is in `DSOS`. Every mapped code exists under its GLN with the right `ChargeType`. Names are unique, lowercase and kebab-case. | A2 |
-| T2 | `get_dso_tariffs` on fixture rows. Radius picks `Price{h+1}` per local hour across a season switch (e.g. 2026-03-31 → 2026-04-01). Elinord's daily price fills all hours. Konstant-151 uses `151-NT01T` in 2025 and `C_FBTNTR_B` after the code change. DST days give 23/25 rows, with the repeated 02:00 hour priced with `Price3` twice. A lone date gives 24 rows and a lone timestamp one. An hour before the first row is NaN. | A1, A6 |
-| T3 | Overlap and edges. When two rows overlap, the latest `ValidFrom` wins. `ValidTo` is exclusive (the row's last day ends at midnight). A null `ValidTo` is open-ended. A `None` price gives NaN. The output columns are exactly `start, end, tariff`, with `end - start == 1h` on every row, including the DST hours in elapsed time. | A1, A6 |
+| T1 | `DSOS` completeness against the catalogue. Every GLN whose C consumption tariff is still valid (latest `ValidTo` null or after 2026-10-06), except the two merged 2025-only GLNs listed by name, (a note matching `Nettarif C`/`C-Kunde` that is not a discount, production, feed-in, availability or regional row, plus Hurup's 0-100000 kWh tariff) is in `DSOS`. Every mapped code exists under its GLN with the right `ChargeType`. Names are unique, lowercase and kebab-case. | A2 |
+| T2 | `get_dso_tariffs` on fixture rows. Radius picks `Price{h+1}` per local hour across a season switch (e.g. 2026-03-31 → 2026-04-01). Elinord's daily price fills all hours. Konstant-151 uses `151-NT01T` in 2025 and `C_FBTNTR_B` after the code change. DST days give 23/25 rows, with the repeated 02:00 hour priced with `Price3` twice. A lone date gives 24 rows and a lone timestamp one. A lone timestamp at 00:00 on a row's `ValidFrom` day returns the new row's price (the fetch's end padding); so does an explicit period ending at 01:00 that day. An hour before the first row is NaN, and a period before 2014-01-01 is all NaN with no request. | A1, A6 |
+| T3 | Overlap and edges. When two rows overlap, the latest `ValidFrom` wins. `ValidTo` is exclusive (the row's last day ends at midnight). A null `ValidTo` is open-ended. A `None` price gives NaN. An equal-`ValidFrom` tie resolves by code order. An unknown `ResolutionDuration` raises `EnergiDataServiceError` naming it. The output columns are exactly `start, end, tariff`, with `end - start == 1h` on every row, including the DST hours in elapsed time. | A1, A6 |
 | T4 | `get_energinet_tariffs` returns 2026 hours with 0.072/0.043 and 2025 hours with 0.074/0.061. One request carries both codes. | A3 |
 | T5 | Subscriptions. Radius over 2026 gives rows split at its validity boundaries, the first and last clipped to the request, in DKK/month. A gap before the first row is a NaN row. Energinet 41004 gives 15.166666 for 2025 and 15.583333 for 2026. `sunds` gives one all-NaN row and no request. | A4, A6 |
 | T6 | `get_electricity_tax`: 2025 hours 0.72, 2026 hours 0.008, and a mid-2023 row change (0.008 → 0.697 on 2023-07-01) lands on the right hour. The docstring states the reduced rate is not published. | A5 |
-| T7 | Requests and the client. The exact filter (GLN, ChargeType, codes) is sent, with start 2014-01-01, `sort=ValidFrom asc` and the needed `columns`, as **one** request even for a 10-year period. `max_span` overrides the window and is validated. An unknown DSO (`"radius "`, `"xyz"`) raises `ValueError` listing names, with no request made. Case-insensitive names work (`"Radius"`). An owned client is closed (also on HTTP 400); a passed one is left open; calls work inside a running event loop. | A2, A7 |
+| T7 | Requests and the client. The exact filter (GLN, `ChargeType` `D03`/`D01` per function, codes) is sent, with start 2014-01-01 and end two local days past the period, `sort=ValidFrom asc` and the needed `columns`, as **one** request even for a 10-year period. `max_span` overrides the window and is validated. An unknown DSO (`"radius "`, `"xyz"`) raises `ValueError` listing names, with no request made. Case-insensitive names work (`"Radius"`). An owned client is closed (also on HTTP 400); a passed one is left open; calls work inside a running event loop. | A2, A7 |
 | T8 | README rows and docstrings name the dataset, codes, DKK/kWh or DKK/month, resolution, format and the DSO table. The no-network guard holds. | A7 |
 
 ### Coverage check
@@ -321,6 +349,34 @@ Shared behaviour:
   T3, T5, T6; A7 T7, T8.
 - **Nothing in the Public API is without a criterion:** `max_span` traces to A7 (one request
   per call through the client), and the showcases follow the module convention.
+
+### Critique
+
+Read by the `plan-critic` (verdict: accept with changes). Settled with live probes where the
+finding was about data:
+
+1. **The fetch's end bound could drop the row starting on the last day.** Applied, and
+   proven live: the API filters `ValidFrom` by date and ignores `timezone`, so the fetch now
+   ends two local days past the period (Approach, guide 3, T2).
+2. **The record form and the mock's comparison rule were unstated.** Applied: records are
+   naive local midnights, and the mock compares dates as the API does (Approach, Modules).
+3. **The tie-break was undefined.** Applied: on overlap the latest `ValidFrom` wins, then
+   code order, then no Flex/time. The data has no ties within mapped codes; same-code
+   Flex/time labels carry the code's own prices (DSO-table preamble, T3).
+4. **midtfyns appeared to be on the Flex lineage.** Rebutted with data: `TNT15000` and
+   `TNT15001` have identical prices every month of 2025–2026 and only their labels swap, so
+   the choice does not change a price. Raised to the user at the gate anyway.
+5. **T1 needed "current", but the catalogue had no validity.** Applied: the catalogue
+   carries the latest `ValidTo`, and the merged GLNs are explicit exclusions.
+6. **A period before 2014 was unhandled.** Applied: it makes no request and returns all
+   NaN (guide 3, T2).
+7. **Charge types per code, and unknown resolutions, were unstated.** Applied: D03 for the
+   tariffs and EA-001, D01 for the subscriptions; an unknown resolution raises
+   `EnergiDataServiceError` (guide 3, T3, T7).
+8. **The plan reimplemented `MarketsService`.** Applied: it gains a per-dataset filter field
+   instead of a second mock (Modules).
+9. **Wording.** Applied: the fixture is a JSON object like the markets fixture. The DSO
+   count (35, with the merged GLNs excluded) is stated at the gate.
 
 ### Risks
 
