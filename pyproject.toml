@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "energydata"
-version = "0.1.0"
+version = "1.0.0"
 description = "APIs for collecting energy data from Energinet Energi Data Service, Eloverblik and the ENTSO-E Transparency Platform."
 authors = [
   { name = "Peter Mads Pedersen", email = "petermads123@hotmail.com" }
