@@ -1,6 +1,6 @@
 # Energi Data Service tariffs, subscriptions and elafgift
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | done |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -489,16 +489,30 @@ Edge cases considered and deliberately skipped, with reasons:
 
 ## 6. Concept check
 
+Run 2026-10-06 against live data (Radius, Energinet, elafgift, six DSOs outside the fixture) and the suite (1735 passed; ruff and mypy clean; the markets, day-ahead and client suites are inside that run).
+
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | hourly `tariff`, tz-aware, DST, price-by-hour | yes | Live: `get_dso_tariffs("Radius","2026-10-15")` gives 24 rows, `datetime64[ns, Europe/Copenhagen]` start/end, float `tariff`, 18:00 = 0.955573 (= `Price19`); 2026-10-25 gives 25 rows, 2026-03-29 gives 23. Tests `test_get_dso_tariffs_hour_n_takes_price_n_plus_one`, `..._autumn_repeats_hour_two_with_price_three_twice`, `..._prices_every_hour_by_its_wall_clock_hour`. |
+| A2 | friendly names, README table, all DSOs, `ValueError` | yes | `DSOS` has 35 entries (`dsos.py`), README table at README.md:~75-110 checked by `test_readme_lists_every_dso_with_its_gln_and_codes`; completeness against the catalogue by `test_dsos_cover_every_gln_with_a_current_c_consumption_tariff`; live `get_dso_tariffs("xyz", ...)` raises `ValueError` listing names; live 2026-10-15 for n1-344, midtfyns, vores-elnet, konstant-151, laesoe, hurup (none in the fixture except hurup) all give 0 NaN hours and a subscription. |
+| A3 | Energinet `system_tariff`/`transmission_tariff` | yes | Live 2025-12-31T23:00 to 2026-01-01T01:00: transmission 0.061 then 0.043 (system likewise changes); `test_get_energinet_tariffs_keeps_system_and_transmission_apart`, `..._is_one_request_with_both_codes`. |
+| A4 | subscriptions per validity period, clipped | yes | Live Energinet 2025-06-01 to 2026-03-01: rows 15.166666 (to 2026-01-01) and 15.583333, ends clipped to the request; Radius 2025-12-01 to 2026-02-01: one row 36.773011. Tests `..._splits_at_the_year_and_clips_the_ends`, `..._cover_the_request_without_gaps_or_overlaps`. |
+| A5 | `electricity_tax`, docstring on reduced rate | yes | Live: 0.72 at 2025-12-31 23:00, 0.008 at 2026-01-01 00:00; docstring says the reduced rate is not published (`test_the_tax_docstring_says_the_reduced_rate_is_not_published`). |
+| A6 | full period, NaN for gaps | yes | Live Radius 2013-12-31 to 2014-01-02: 48 rows, all NaN; live `sunds` subscription: one NaN row spanning the request. Tests `..._hour_before_the_first_row_is_nan_and_the_period_is_full`, `..._a_gap_before_the_first_row_is_a_nan_row`. |
+| A7 | via client, loop-safe, fixture tests, README/docstrings | yes | `_load` uses `EnergiDataServiceClient.get_dataset` (`pricelist.py`); suite runs offline with the autouse guard (`test_a_real_client_cannot_reach_the_network_in_tests`); every docstring carries the property table (`test_each_docstring_names_dataset_codes_unit_resolution_and_format`); fixture `tests/fixtures/energidataservice_pricelist.json`. |
 
 Drift found, and what was done about it:
+
+- **Recorded deviation, no Flex/time note tie-break (section 3).** Section 1 does not mention a tie-break at all (only "the later `ValidFrom` wins"), so no criterion is affected. The plan's own text said ties are resolved by code order then note; the data has no equal-`ValidFrom` pair within any mapped code, and the live spot-checks above are unaffected. Accepted as a plan-text versus code difference; the plan text is left as the historical record.
+- **Structure auditor.** Both items applied to `.claude/rules/structure-energidataservice.md` (the `pricelist.py` validity/price refusals; the `test_dsos.py` description).
+- **Out of scope:** nothing from the exclusion list was built (no discount, variant, one-off, reduced-rate or VAT code). **Surface:** only the five functions, `Dso`, `DSOS` and the additive `max_span` keyword; the markets functions are untouched.
+- **Showcase:** `python -m energydata.energidataservice.pricelist` equivalents run live above read as a worked example (named inputs, one call, a result).
 
 ### Earlier rounds still hold
 
 | Round | # | Criterion | Still met | Evidence |
 |---|---|---|---|---|
+| | | none: first round (the markets branch's suites `test_balancing.py`, `test_reserves.py`, `test_day_ahead.py`, `test_energidataservice_client.py` pass in the 1735) | n/a | |
 
 ---
 

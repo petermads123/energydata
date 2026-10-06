@@ -91,7 +91,7 @@ Hourly capacity markets in EUR/MW/h; `include_volumes=True` appends volume colum
 
 ## `src/energydata/energidataservice/pricelist.py`
 
-Reads *DatahubPricelist*, all DKK excl. VAT. Each function makes **one** request filtered on `GLN_Number`, `ChargeType` and `ChargeTypeCode`, from 2014-01-01 to local midnight two days after the period's last local date (the API filters `ValidFrom` by date, ignoring `timezone`), and none for a period ending on or before 2014-01-01. A row is valid on `ValidFrom <= t < ValidTo` (null `ValidTo` open-ended); the latest `ValidFrom` wins, then the earlier code. The fetch also reads `GLN_Number` and `ChargeType`; a record of another GLN, charge type or code, a `ResolutionDuration` other than `PT1H`/`P1D` (tariffs) or `P1M` (subscriptions), or a missing, empty or unparseable `ValidFrom`/`ValidTo` is an `EnergiDataServiceError`. A zoned validity date counts as its Danish local date. A closed passed client is noticed (`RuntimeError`) only when a request is made. Every function takes `start: TimeLike, end: TimeLike | None = None, *, client: EnergiDataServiceClient | None = None` (a DSO function takes `dso: str` first) and returns `pd.DataFrame` on a `RangeIndex`.
+Reads *DatahubPricelist*, all DKK excl. VAT. Each function makes **one** request filtered on `GLN_Number`, `ChargeType` and `ChargeTypeCode`, from 2014-01-01 to local midnight two days after the period's last local date (the API filters `ValidFrom` by date, ignoring `timezone`), and none for a period ending on or before 2014-01-01. A row is valid on `ValidFrom <= t < ValidTo` (null `ValidTo` open-ended); the latest `ValidFrom` wins, then the earlier code. The fetch also reads `GLN_Number` and `ChargeType`; a record of another GLN, charge type or code, a `ResolutionDuration` other than `PT1H`/`P1D` (tariffs) or `P1M` (subscriptions), a missing `ValidFrom`, a non-text, empty or unparseable `ValidFrom`/`ValidTo` (a missing or null `ValidTo` is open-ended), or a non-numeric price is an `EnergiDataServiceError`. A zoned validity date counts as its Danish local date. A closed passed client is noticed (`RuntimeError`) only when a request is made. Every function takes `start: TimeLike, end: TimeLike | None = None, *, client: EnergiDataServiceClient | None = None` (a DSO function takes `dso: str` first) and returns `pd.DataFrame` on a `RangeIndex`.
 
 | Signature | Description |
 |---|---|
@@ -116,7 +116,7 @@ Written at step 5, none touching the network: `tests/test_energidataservice_clie
 (radius, cerius, konstant-151, n1-131, elinord, hurup), each with `GLN_Number` and
 `ChargeType`; `catalogue` is every distinct (GLN, owner, type, code, note) valid since 2025
 with its `LatestValidTo` (null = open) and no prices, for the completeness test.
-`test_dsos.py` also checks the README's DSO table and the plan's table row by row.
+`test_dsos.py` also checks `DSOS` row by row against an independent copy of the table agreed at the plan gate, and the README's DSO table against `DSOS`.
 `tests/conftest.py` carries the support: the
 `markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
 that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
