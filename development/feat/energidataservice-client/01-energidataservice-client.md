@@ -172,9 +172,12 @@ The subpackage has two parts:
   `date_windows` over `max_span` and gathers the windows concurrently through the new
   `utils.chunking.gather_chunked`. Each window asks for every record (`limit=0`) and checks
   the payload's `total` against what came back.
-- **`get_day_ahead_prices`** gathers *Elspotprices* and *DayAheadPrices* concurrently. It
-  pivots each to wide, spreads the hourly data to quarter-hours within its own hour, lets
-  the 15-minute data win, and conforms the result to the full period index.
+- **`get_day_ahead_prices`** splits the period at the fixed switch instant `SWITCH`
+  (2025-10-01 00:00 `Europe/Copenhagen`). It requests *Elspotprices* only if the period
+  starts before it and *DayAheadPrices* only if the period ends after it, concurrently when
+  both are needed. It pivots each to wide, spreads the hourly one to quarter-hours within
+  its own hour, conforms each side to its own slots and joins them. (User decision during
+  step 5.)
 
 Rejected:
 
@@ -237,7 +240,7 @@ Rejected:
 | `EnergiDataServiceClient(*, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, max_span: timedelta = timedelta(days=31), transport: httpx.AsyncBaseTransport \| None = None)` | `energidataservice.client` | `ApiClient` on `BASE_URL = "https://api.energidataservice.dk"`. A non-positive `max_span` raises `ValueError`. | A5 |
 | `async EnergiDataServiceClient.fetch_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `energidataservice.client` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently with `gather_chunked`. The params are: `start`/`end` in UTC as `YYYY-MM-DDTHH:MM`, `timezone=UTC`, `limit=0`, `filter` as compact JSON, and `columns` comma-joined. The windows' records are concatenated in window order. Raises `EnergiDataServiceError` for an unexpected payload, plus the errors of `request`. Naive bounds raise `ValueError`. Like `request`, it raises `RuntimeError` when awaited outside the client's loop. Sends `sort=<sort_by> asc` when `sort_by` is given. | A5, A6 |
 | `EnergiDataServiceClient.get_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `energidataservice.client` | The sync form: `self.run(lambda: self.fetch_dataset(...))`. | A5, A6 |
-| `get_day_ahead_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.day_ahead` | See A1 to A4. The docstring carries the output table: EUR/MWh excl. VAT, 15-minute, wide, `DK1`/`DK2`, sources *DayAheadPrices* (`TimeUTC`, `PriceArea`, `DayAheadPriceEUR`) and *Elspotprices* (`HourUTC`, `PriceArea`, `SpotPriceEUR`), hourly history forward-filled, NaN for unpublished slots. Without `client`, it creates one and closes it; a given client is left open. | A1–A4, A6, A8 |
+| `get_day_ahead_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.day_ahead` | See A1 to A4. The docstring carries the output table: EUR/MWh excl. VAT, 15-minute, wide, `DK1`/`DK2`, sources *DayAheadPrices* (`TimeUTC`, `PriceArea`, `DayAheadPriceEUR`) and *Elspotprices* (`HourUTC`, `PriceArea`, `SpotPriceEUR`), hourly prices before `SWITCH` (2025-10-01 00:00 Danish time) repeated over four quarter-hours, 15-minute prices from it, a null or missing 15-minute value NaN, NaN for unpublished slots; a dataset is requested only when the period overlaps its side of `SWITCH`. (User decision during step 5.) Without `client`, it creates one and closes it; a given client is left open. | A1–A4, A6, A8 |
 | `main() -> None` in each new module | all | Showcase. The utils showcases are offline (a `MockTransport` for `api_client`). `client` and `day_ahead` call the live API. | — |
 
 ### Implementation guide
@@ -285,16 +288,20 @@ Rejected:
    Only a shortfall is an error.
 8. **`energidataservice/day_ahead.py`.**
    - Resolve the period, normalise the zones and build the index.
-   - Request the hourly dataset over the period widened to whole hours (floor the start,
-     ceil the end in UTC), so a period starting mid-hour still gets its hour's price.
-   - Run the two `fetch_dataset` calls in a TaskGroup inside one `client.run`, with the
-     same lowest-index re-raise rule as `gather_chunked`, so a failure in one cancels the
-     other before an own client is closed. The client's semaphore caps the total.
+   - `SWITCH` is a module constant. Request *Elspotprices* only when the period starts
+     before it, over `[start, min(end, SWITCH))` widened to whole UTC hours (floor the
+     start, ceil the end), so a period starting mid-hour still gets its hour's price.
+     Request *DayAheadPrices* only when the period ends after it, over
+     `[max(start, SWITCH), end)`.
+   - Run the needed `fetch_dataset` calls in one `client.run` through `_gather_ordered`
+     (lowest-index re-raise rule, so a failure in one cancels the other before an own
+     client is closed). The client's semaphore caps the total.
    - Pass `filters={"PriceArea": list(zones)}`, `columns=[<time field>, "PriceArea",
      <EUR field>]` and `sort_by=<time field>` to each.
-   - Pivot each with `records_to_wide`, expand the hourly one 1 h → 15 min, then
-     `quarter.combine_first(hourly)` so the 15-minute data wins.
-   - Finish with `conform(…, index, zones)`.
+   - Pivot each with `records_to_wide`, expand the hourly one 1 h → 15 min, conform the
+     hourly side to the slots before `SWITCH` and the 15-minute side to the slots from it,
+     and concatenate. No `combine_first` across the switch: a null 15-minute value stays
+     NaN. (User decision during step 5.)
    - The dataset and field names are module constants.
 9. **Tests**, per the intents below. Move the no-network guard to `tests/conftest.py` and
    update the dependency test in `test_readers.py`. Retry tests use
@@ -314,7 +321,7 @@ Rejected:
 | T4 | `gather_chunked` returns results in window order even when windows finish out of order. Its in-flight count never exceeds `limit` and does exceed 1 when allowed. A failure cancels the rest and raises the lowest-index window's own exception, never an `ExceptionGroup`. | A6 |
 | T5 | `ApiClient`: it hits `base_url + path`; a 503 then 200 is retried through the wrapper; in-flight requests never exceed `max_concurrency`; `run` works from inside a running event loop and from several threads; the client is reusable across many `run` calls; `close` is idempotent; `run` after close raises; the context manager closes; a `run` from the loop thread raises; awaiting `request` on a foreign loop raises `RuntimeError`; interrupting `run` cancels the work. | A5, A6 |
 | T6 | `EnergiDataServiceClient` sends the exact params (UTC start/end, `timezone`, `limit=0`, `filter` JSON, `columns`, `sort`). A period longer than `max_span` becomes several concurrent requests whose records are concatenated in window order. A `total` larger than the records count and a missing `records` key both raise `EnergiDataServiceError`. An HTTP 400 surfaces as `httpx.HTTPStatusError`. | A5, A6 |
-| T7 | `get_day_ahead_prices` on mocked data: a 15-minute-only period; an hourly-only period forward-filled to quarters; a period spanning the switch, where the 15-minute data wins on overlap; a lone date and a lone mid-hour timestamp; a future period returning all NaN of the right shape; a zone subset and its order; both datasets requested; a passed client left open and an own client closed; the captured requests carry the `PriceArea` filter and the columns; when one dataset returns HTTP 400 the call raises `httpx.HTTPStatusError` and its own client is still closed cleanly. | A1–A4, A6 |
+| T7 | `get_day_ahead_prices` on mocked data: a 15-minute-era period; an hourly-era period repeated over quarters; a null 15-minute value is NaN even when hourly data exists; a period spanning the switch combining the two; single-dataset requests per side; a lone date and a lone mid-hour timestamp; a future period returning all NaN of the right shape; a zone subset and its order; both datasets requested only when the period spans the switch; a passed client left open and an own client closed; the captured requests carry the `PriceArea` filter and the columns; when one dataset returns HTTP 400 the call raises `httpx.HTTPStatusError` and its own client is still closed cleanly. | A1–A4, A6 |
 | T8 | No module under `utils/` names Energi Data Service, its datasets or its fields (a source scan). The runtime dependencies are exactly `httpx` and `pandas`. No test reaches the network (the conftest guard and its check). The README endpoints table and `get_day_ahead_prices.__doc__` both name EUR/MWh, 15 min, wide, DK1/DK2, *DayAheadPrices* and *Elspotprices*. | A7, A8 |
 
 ### Coverage check
@@ -411,8 +418,16 @@ No deviation from the Public API table; every signature is as written. Smaller p
 - **`ApiClient.close`** also cancels work still running on the loop before closing the HTTP
   client, so a `run` in flight in another thread ends with a cancellation instead of hanging.
 - Offline check: `get_day_ahead_prices` against a `MockTransport` returned the expected
-  frame (mid-hour start, 15-minute value winning, hourly forward-fill). The live showcases
+  frame (mid-hour start, 15-minute value winning, hourly forward-fill; superseded by the user decision during step 5). The live showcases
   fail here with `httpx.ProxyError: 403 Forbidden`, as the plan's Risks expected.
+
+- **User decision during step 5.** `get_day_ahead_prices` now uses the fixed switch
+  `SWITCH` = 2025-10-01 00:00 `Europe/Copenhagen` instead of `combine_first` over both
+  datasets: hourly (repeated over quarters) before it, DayAheadPrices only from it, a null
+  or missing 15-minute value NaN, each dataset requested only when the period overlaps its
+  side. Section 2's approach, guide 8, T7 and the Public API purpose text were edited to
+  match; the README row, the docstring and `structure-energidataservice.md` too. No
+  signature changed; `SWITCH` is a new public module constant.
 
 ---
 

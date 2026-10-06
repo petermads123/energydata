@@ -28,10 +28,10 @@ showcase; the ones here call the live API.
 
 | Signature | Description |
 |---|---|
-| `get_day_ahead_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | EUR/MWh excl. VAT, 15-minute, wide, tz-aware Copenhagen index over exactly `[start, end)`, one column per zone. Fetches *DayAheadPrices* and *Elspotprices* concurrently; hourly history is expanded to quarter-hours and the 15-minute value wins; unpublished slots are NaN. Without `client` it creates and closes one. |
+| `get_day_ahead_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | EUR/MWh excl. VAT, 15-minute, wide, tz-aware Copenhagen index over exactly `[start, end)`, one column per zone. Slots before `SWITCH` (2025-10-01 00:00 Danish time) hold the *Elspotprices* hourly price repeated over four quarter-hours; slots from it on hold only *DayAheadPrices*, a null or missing value being NaN, never filled from hourly data. A dataset is requested only when the period overlaps its side; both run concurrently when both are needed. Unpublished slots are NaN. Without `client` it creates and closes one. |
 | `main() -> None` | Showcase (live API). |
 
-Module constants name the datasets and fields (`QUARTER_DATASET`, `QUARTER_TIME`,
+Module constants: `SWITCH` (the `pd.Timestamp` of the switch) and the dataset and field names (`QUARTER_DATASET`, `QUARTER_TIME`,
 `QUARTER_VALUE`, `HOURLY_DATASET`, `HOURLY_TIME`, `HOURLY_VALUE`, `AREA`).
 
 ## Tests

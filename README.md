@@ -33,7 +33,7 @@ prices = get_day_ahead_prices("2026-01-15", bidding_zones=["DK1", "DK2"])
 
 | Function | Currency and unit | Resolution | Format | Zones | Source datasets |
 |---|---|---|---|---|---|
-| `get_day_ahead_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh, excl. VAT | 15 minutes | wide: one float column per zone | `DK1`, `DK2` | *DayAheadPrices* (15 minutes, current) and *Elspotprices* (hourly, history, forward-filled to quarter-hours; the 15-minute value wins on overlap) |
+| `get_day_ahead_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh, excl. VAT | 15 minutes | wide: one float column per zone | `DK1`, `DK2` | *Elspotprices* (hourly, before 2025-10-01 00:00 Danish time, repeated over its four quarter-hours) and *DayAheadPrices* (15 minutes, from that instant; a missing value is NaN, never filled from hourly data) |
 
 The functions are plain synchronous calls, also from Jupyter. Several requests for one call
 run concurrently, up to a configurable cap.

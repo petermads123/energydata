@@ -1,6 +1,6 @@
 """Day-ahead electricity prices for the Danish bidding zones."""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -12,7 +12,7 @@ from energydata.utils.frames import (
     period_index,
     records_to_wide,
 )
-from energydata.utils.periods import TimeLike, resolve_period
+from energydata.utils.periods import DANISH_TZ, TimeLike, resolve_period
 from energydata.utils.zones import BIDDING_ZONES, BiddingZone, normalize_bidding_zones
 
 from .client import EnergiDataServiceClient, Record
@@ -24,6 +24,9 @@ HOURLY_DATASET = "Elspotprices"
 HOURLY_TIME = "HourUTC"
 HOURLY_VALUE = "SpotPriceEUR"
 AREA = "PriceArea"
+
+SWITCH = pd.Timestamp("2025-10-01 00:00", tz=DANISH_TZ)
+"""The first slot priced in 15 minutes; every earlier slot is an hourly price."""
 
 _QUARTER = timedelta(minutes=15)
 _HOUR = timedelta(hours=1)
@@ -47,9 +50,13 @@ def get_day_ahead_prices(
     | Source datasets | *DayAheadPrices* (`TimeUTC`, `PriceArea`, `DayAheadPriceEUR`), 15 minutes, current; *Elspotprices* (`HourUTC`, `PriceArea`, `SpotPriceEUR`), hourly, history |
 
     The index is tz-aware `Europe/Copenhagen` and covers exactly `[start, end)`.
-    Hourly history is forward-filled to its four quarter-hours; where both
-    datasets have a value for a slot, the 15-minute one wins. A slot with no
-    published data, such as tomorrow before publication, is NaN.
+    Prices switched from hourly to 15-minute at 2025-10-01 00:00 Danish time
+    (`SWITCH`). Slots before it hold the *Elspotprices* hourly price repeated
+    over its four quarter-hours; slots from it on hold only the
+    *DayAheadPrices* value, and a null or missing one is NaN, never filled
+    from hourly data. A dataset is requested only when the period overlaps its
+    side of the switch. A slot with no published data, such as tomorrow before
+    publication, is NaN.
 
     Args:
         start: First moment of the period. A date means local midnight; a
@@ -76,69 +83,95 @@ def get_day_ahead_prices(
     zones = normalize_bidding_zones(bidding_zones)
     first, last = resolve_period(start, end, resolution=_QUARTER)
     index = period_index(first, last, _QUARTER)
-    hour_start = first.tz_convert("UTC").floor("h")
-    hour_end = last.tz_convert("UTC").ceil("h")
+    # Each side's request covers only its own part of the period; the hourly one
+    # is widened to whole hours so a mid-hour start still gets its hour's price.
+    hourly_period = (
+        (
+            first.tz_convert("UTC").floor("h").to_pydatetime(),
+            min(last, SWITCH).tz_convert("UTC").ceil("h").to_pydatetime(),
+        )
+        if first < SWITCH
+        else None
+    )
+    quarter_period = (
+        (max(first, SWITCH).to_pydatetime(), last.to_pydatetime())
+        if last > SWITCH
+        else None
+    )
 
     owned = client is None
     active = EnergiDataServiceClient() if client is None else client
     try:
-        quarter_records, hourly_records = active.run(
-            lambda: _fetch_both(
-                active,
-                zones,
-                (first.to_pydatetime(), last.to_pydatetime()),
-                (hour_start.to_pydatetime(), hour_end.to_pydatetime()),
-            )
+        hourly_records, quarter_records = active.run(
+            lambda: _fetch_sides(active, zones, hourly_period, quarter_period)
         )
     finally:
         if owned:
             active.close()
 
-    quarter = records_to_wide(
-        quarter_records, time=QUARTER_TIME, column=AREA, value=QUARTER_VALUE
-    )
-    hourly = records_to_wide(
-        hourly_records, time=HOURLY_TIME, column=AREA, value=HOURLY_VALUE
-    )
-    spread = expand_to_resolution(hourly, _HOUR, _QUARTER)
-    return conform(quarter.combine_first(spread), index, zones)
+    parts: list[pd.DataFrame] = []
+    before = index[index < SWITCH]
+    if len(before):
+        hourly = records_to_wide(
+            hourly_records, time=HOURLY_TIME, column=AREA, value=HOURLY_VALUE
+        )
+        parts.append(
+            conform(expand_to_resolution(hourly, _HOUR, _QUARTER), before, zones)
+        )
+    after = index[index >= SWITCH]
+    if len(after):
+        quarter = records_to_wide(
+            quarter_records, time=QUARTER_TIME, column=AREA, value=QUARTER_VALUE
+        )
+        parts.append(conform(quarter, after, zones))
+    return parts[0] if len(parts) == 1 else pd.concat(parts)
 
 
-async def _fetch_both(
+async def _fetch_sides(
     client: EnergiDataServiceClient,
     zones: Sequence[str],
-    quarter_period: tuple[datetime, datetime],
-    hourly_period: tuple[datetime, datetime],
+    hourly_period: tuple[datetime, datetime] | None,
+    quarter_period: tuple[datetime, datetime] | None,
 ) -> tuple[list[Record], list[Record]]:
-    """Fetch both datasets concurrently; one failing cancels the other."""
+    """Fetch the datasets the period needs, concurrently; a failure cancels the rest.
+
+    Returns the hourly and the 15-minute records; a side with no period is empty.
+    """
     filters = {AREA: list(zones)}
 
-    async def quarter() -> list[Record]:
-        return await client.fetch_dataset(
-            QUARTER_DATASET,
-            *quarter_period,
-            filters=filters,
-            columns=[QUARTER_TIME, AREA, QUARTER_VALUE],
-            sort_by=QUARTER_TIME,
-        )
-
-    async def hourly() -> list[Record]:
+    async def hourly(period: tuple[datetime, datetime]) -> list[Record]:
         return await client.fetch_dataset(
             HOURLY_DATASET,
-            *hourly_period,
+            *period,
             filters=filters,
             columns=[HOURLY_TIME, AREA, HOURLY_VALUE],
             sort_by=HOURLY_TIME,
         )
 
-    quarter_records, hourly_records = await _gather_ordered([quarter, hourly])
-    return quarter_records, hourly_records
+    async def quarter(period: tuple[datetime, datetime]) -> list[Record]:
+        return await client.fetch_dataset(
+            QUARTER_DATASET,
+            *period,
+            filters=filters,
+            columns=[QUARTER_TIME, AREA, QUARTER_VALUE],
+            sort_by=QUARTER_TIME,
+        )
+
+    calls: list[Callable[[], Awaitable[list[Record]]]] = []
+    if hourly_period is not None:
+        calls.append(lambda: hourly(hourly_period))
+    if quarter_period is not None:
+        calls.append(lambda: quarter(quarter_period))
+    results = iter(await _gather_ordered(calls))
+    hourly_records = next(results) if hourly_period is not None else []
+    quarter_records = next(results) if quarter_period is not None else []
+    return hourly_records, quarter_records
 
 
 def main() -> None:
     """Showcase this module's functionality (calls the live API)."""
     start: TimeLike = "2026-01-15"  # a date, a datetime or an ISO 8601 string
-    end = None  # exclusive; None means the whole day for a date
+    end: TimeLike | None = None  # exclusive; None means the whole day for a date
     bidding_zones: Sequence[BiddingZone] = ["DK1", "DK2"]  # "DK1", "DK2", or both
 
     prices = get_day_ahead_prices(start, end, bidding_zones)
@@ -146,8 +179,18 @@ def main() -> None:
     print(f"{len(prices)} quarter-hours, EUR/MWh")
     print(prices.head(8))
 
+    # A period spanning the switch from hourly to 15-minute prices (2025-10-01).
+    start = "2025-09-30"
+    end = "2025-10-02"
+
+    prices = get_day_ahead_prices(start, end, bidding_zones)
+
+    print(f"{len(prices)} quarter-hours across the switch")
+    print(prices.iloc[92:100])
+
     # A single slot for one zone.
     start = "2026-01-15T12:00"
+    end = None
     bidding_zones = ["DK2"]
 
     prices = get_day_ahead_prices(start, end, bidding_zones)
