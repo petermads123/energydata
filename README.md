@@ -34,6 +34,16 @@ prices = get_day_ahead_prices("2026-01-15", bidding_zones=["DK1", "DK2"])
 | Function | Currency and unit | Resolution | Format | Zones | Source datasets |
 |---|---|---|---|---|---|
 | `get_day_ahead_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh, excl. VAT | 15 minutes | wide: one float column per zone | `DK1`, `DK2` | *Elspotprices* (hourly, before 2025-10-01 00:00 Danish time, repeated over its four quarter-hours) and *DayAheadPrices* (15 minutes, from that instant; a missing value is NaN, never filled from hourly data) |
+| `get_imbalance_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns; one price, repeated in both | `DK1`, `DK2` | *ImbalancePrice* (`ImbalancePriceEUR`), from 2025-03-04 |
+| `get_afrr_energy_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns | `DK1`, `DK2` | *ImbalancePrice* (`aFRRVWAUpEUR`, `aFRRVWADownEUR`), from 2025-03-04 |
+| `get_mfrr_energy_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns | `DK1`, `DK2` | *MfrrEnergyActivationMarket* (`mFRRSAUpEUR`, `mFRRSADownEUR`), from 2025-03-04 |
+| `get_mfrr_capacity_prices(start, end=None, bidding_zones=("DK1", "DK2"), *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `(zone, up/down)` columns, plus volume columns | `DK1`, `DK2` | *MfrrCapacityMarket*, from 2023-06-21 |
+| `get_afrr_capacity_prices(start, end=None, bidding_zones=("DK1", "DK2"), *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `(zone, up/down)` columns, plus volume columns | `DK1`, `DK2` (Nordic rows never returned) | *AfrrReservesNordic*, from 2022-12-08 |
+| `get_fcr_n_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-N`, auction `Total`), from 2021-11-10 |
+| `get_fcr_d_up_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-D upp`, auction `Total`), from 2021-11-10 |
+| `get_fcr_d_down_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-D ned`, auction `Total`), from 2021-11-10 |
+| `get_fcr_dk1_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 4-hour blocks (00, 04, ..., 20 Danish time) | wide: `cross_border` and `danish` columns, plus volume columns | `DK1` | *FcrDK1*, from 2021-01-19 |
+| `get_ffr_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FfrDK2*, from 2021-04-26 |
 
 The functions are plain synchronous calls, also from Jupyter. Several requests for one call
 run concurrently, up to a configurable cap.

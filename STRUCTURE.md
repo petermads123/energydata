@@ -40,7 +40,7 @@ here, but everything in this file is in context every session.
 src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
-    energidataservice/  Energi Data Service: client and `get_day_ahead_prices`
+    energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -63,8 +63,8 @@ this subpackage. Modules: `src/energydata/utils/__init__.py` (re-exports every p
 fetch), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
 with its own event loop), `src/energydata/utils/periods.py` (`start`/`end` resolution),
 `src/energydata/utils/zones.py` (bidding-zone normalisation) and
-`src/energydata/utils/frames.py` (period index, wide pivot, resolution expansion, NaN
-padding). Tests: `tests/test_retry.py`, `tests/test_readers.py`, `tests/test_chunking.py`,
+`src/energydata/utils/frames.py` (period index, block index, wide pivot, resolution expansion, NaN
+padding, two-level column combining). Tests: `tests/test_retry.py`, `tests/test_readers.py`, `tests/test_chunking.py`,
 `tests/test_api_client.py`, `tests/test_periods.py`, `tests/test_zones.py`,
 `tests/test_frames.py`.
 
@@ -74,7 +74,11 @@ Energi Data Service endpoints on top of `utils`. Detail lives in
 `.claude/rules/structure-energidataservice.md`, loaded when working in this subpackage.
 Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public names),
 `src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`) and
-`src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`). Tests:
+`src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`),
+`src/energydata/energidataservice/_markets.py` (private shared fetch-and-shape path),
+`src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and
+`src/energydata/energidataservice/reserves.py` (mFRR/aFRR capacity, FCR-N, FCR-D, FCR DK1, FFR
+prices). Tests:
 `tests/conftest.py` (the autouse no-network guard), `tests/test_energidataservice_client.py`
 and `tests/test_day_ahead.py`.
 

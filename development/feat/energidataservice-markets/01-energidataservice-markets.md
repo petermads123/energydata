@@ -1,6 +1,6 @@
 # Energi Data Service market price endpoints
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -350,6 +350,25 @@ new rather than `Service` (guide 7).
 ---
 
 ## 3. Implementation notes
+
+- **One `_get`, not `_get` plus `_get_blocks`.** The two paths differed only in how the period
+  and index are built, so `_Market.block_hours` selects `block_index` (and the lone-timestamp
+  rule) inside a private `_period` helper and everything else is shared.
+- **`_markets.py` has an offline `main()`** (period handling of the FCR DK1 market), since every
+  module needs one.
+- **Unzoned fetch:** FCR-N/D filter `PriceArea = DK2` and pivot on it; FcrDK1 and FfrDK2 inject a
+  constant key, as planned.
+- **Live checks (2026-10-06):** both showcases ran against the real API; values match the
+  probe (imbalance DK1 23:45 = 171.04, aFRR 179.52/86.09, mFRR 254.17/171.04, mFRR capacity
+  DK1 23:00 2.01/0.11, FCR DK1 blocks 18.22/13.0/34.79/52.61/49.2/25.0, FFR 23:00 23.0,
+  FCR-D down 22:00 2.8728). FCR DK1 on 2026-03-29 (spring DST) gives six blocks at local
+  00/04/.../20; a pre-start period gives an all-NaN full frame; a mid-block lone timestamp
+  raises. The autumn DST day could not be checked live (rate limit).
+- **DEVELOPMENT.md:** narrowed the endpoints entry to tariffs, subscriptions and elafgift, and
+  removed "Live API constants unconfirmed" (from `feat/energidataservice-client`), resolved by
+  the live day-ahead showcase run.
+- **Left for step 5:** `tests/fixtures/energidataservice_markets.json`, the `conftest.py`
+  fixture and transport factory, and all test files.
 
 ---
 
