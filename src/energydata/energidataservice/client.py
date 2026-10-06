@@ -99,7 +99,8 @@ class EnergiDataServiceClient(ApiClient):
             ValueError: If `start` or `end` is naive, has seconds, or
                 `start >= end`.
             RuntimeError: If awaited outside the client's own loop.
-            EnergiDataServiceError: If a payload has no `records` list or
+            EnergiDataServiceError: If a payload is not a JSON object, has no
+                `records` list, has a record that is not a JSON object, or has
                 fewer records than its `total`.
             httpx.HTTPStatusError: For a non-retryable error status.
         """
@@ -153,7 +154,8 @@ class EnergiDataServiceClient(ApiClient):
             ValueError: If `start` or `end` is naive, has seconds, or
                 `start >= end`.
             RuntimeError: If the client is closed.
-            EnergiDataServiceError: If a payload has no `records` list or
+            EnergiDataServiceError: If a payload is not a JSON object, has no
+                `records` list, has a record that is not a JSON object, or has
                 fewer records than its `total`.
             httpx.HTTPStatusError: For a non-retryable error status.
         """

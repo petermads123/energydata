@@ -126,6 +126,18 @@ One suite per module, written at step 5. No test touches the network.
   cases (order, stopping at the first exception, no call when validation fails),
   plus a check that async windows never overlap, and `gather_chunked` (order,
   concurrency cap, lowest-index failure, validation).
-- `tests/test_api_client.py`, `tests/test_periods.py`, `tests/test_zones.py`,
-  `tests/test_frames.py` — one suite per new module, written at step 5.
+- `tests/test_api_client.py` — constructor validation, no thread before first use, URL
+  joining, parsing, retry of 503 and not of 400, the concurrency cap (also across
+  threads), `run` inside a running loop and from other threads, reuse, `run`/`close` from
+  the loop thread and `request` on a foreign loop raising, idempotent `close`, the context
+  manager, cancellation on close and on interrupt, the `run`/`close` race.
+- `tests/test_periods.py` — `resolve_period`: whole local day (92/96/100), lone
+  timestamp, date versus timestamp strings, naive as Danish time, exclusive end, aware
+  input converted, the repeated hour, every `ValueError` naming the value.
+- `tests/test_zones.py` — `normalize_bidding_zones`: order kept, string wrapped, unknown,
+  empty and duplicate input refused naming the value, purity.
+- `tests/test_frames.py` — `period_index` across DST and its rejections; `records_to_wide`
+  time parsing, `None` values, empty input, duplicates, missing fields;
+  `expand_to_resolution` gaps and the autumn DST hour; `conform` padding, order, never
+  filling, duplicates, float64.
 - `tests/conftest.py` — the autouse no-network guard for the whole suite.
