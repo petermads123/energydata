@@ -2,7 +2,14 @@
 
 from .api_client import ApiClient
 from .chunking import async_fetch_chunked, date_windows, fetch_chunked, gather_chunked
-from .frames import conform, expand_to_resolution, period_index, records_to_wide
+from .frames import (
+    block_index,
+    combine_levels,
+    conform,
+    expand_to_resolution,
+    period_index,
+    records_to_wide,
+)
 from .periods import DANISH_TZ, TimeLike, resolve_period
 from .readers import (
     FORMATS,

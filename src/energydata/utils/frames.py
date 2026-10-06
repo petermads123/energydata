@@ -57,6 +57,46 @@ def period_index(
     return index.as_unit("ns")
 
 
+def block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.DatetimeIndex:
+    """Build the index of every block start in `[start, end)`.
+
+    Blocks are `hours` long in local wall-clock time and start at minute 0 of
+    every local hour that is a multiple of `hours` (for 4 hours: 00, 04, ...,
+    20). A DST change makes the block that contains it shorter or longer but
+    never moves a start. A wall-clock start that occurs twice (the repeated
+    autumn hour) is kept once, the earlier.
+
+    Args:
+        start: First block start, inclusive. Must be timezone-aware.
+        end: End of the period, exclusive. Must be timezone-aware.
+        hours: Block length in whole hours. Must be a positive divisor of 24.
+
+    Returns:
+        A `datetime64[ns, tz]` index named `"time"`, in `start`'s timezone.
+
+    Raises:
+        ValueError: If a bound is naive, `start >= end`, `hours` is not a
+            positive divisor of 24, or a bound is not a block start.
+    """
+    for name, stamp in (("start", start), ("end", end)):
+        if stamp.tzinfo is None:
+            raise ValueError(f"{name} must be timezone-aware, got {stamp!r}")
+    if hours <= 0 or 24 % hours:
+        raise ValueError(f"hours must be a positive divisor of 24, got {hours}")
+    end = end.tz_convert(start.tz)
+    if start >= end:
+        raise ValueError(f"start must be before end, got start={start!r} end={end!r}")
+    for name, stamp in (("start", start), ("end", end)):
+        if stamp.hour % hours or stamp.minute or stamp.second or stamp.nanosecond:
+            raise ValueError(
+                f"{name} must be the start of a {hours}-hour block, got {stamp!r}"
+            )
+    hourly = pd.date_range(start, end, freq="h", inclusive="left")
+    wall = pd.DatetimeIndex(hourly.tz_localize(None))
+    keep = (hourly.hour % hours == 0) & ~wall.duplicated()
+    return hourly[keep].as_unit("ns").rename("time")
+
+
 def records_to_wide(
     records: Sequence[Mapping[str, object]],
     *,
@@ -190,6 +230,40 @@ def conform(
     return frame.reindex(index=index, columns=list(columns)).astype("float64")
 
 
+def combine_levels(
+    parts: Mapping[str, pd.DataFrame],
+    index: pd.DatetimeIndex,
+    outer: Sequence[str],
+) -> pd.DataFrame:
+    """Combine per-part wide frames into one frame with two column levels.
+
+    Each part is conformed to `index` and `outer` (NaN where missing), then the
+    parts sit side by side with MultiIndex columns `(outer, part key)`, ordered
+    `outer` first and `parts`' order within each.
+
+    Args:
+        parts: Wide frames keyed by part name; their columns are drawn from
+            `outer`. Columns not in `outer` are dropped.
+        index: The slots the result must hold, in order.
+        outer: The top-level column names, in order.
+
+    Returns:
+        A `float64` frame whose index is exactly `index`.
+
+    Raises:
+        ValueError: If `parts` or `outer` is empty, or a part has a duplicate
+            index entry.
+    """
+    if not parts:
+        raise ValueError("parts must not be empty")
+    if not outer:
+        raise ValueError("outer must not be empty")
+    conformed = {key: conform(part, index, outer) for key, part in parts.items()}
+    joined = pd.concat(conformed, axis=1).swaplevel(axis=1)
+    order = pd.MultiIndex.from_product([list(outer), list(conformed)])
+    return joined.reindex(columns=order).astype("float64")
+
+
 def main() -> None:
     """Showcase this module's functionality."""
     start = pd.Timestamp("2026-03-29", tz="Europe/Copenhagen")
@@ -230,6 +304,21 @@ def main() -> None:
     full = conform(quarters, index, columns)
 
     print(f"{full.shape} frame, {int(full['DK1'].notna().sum())} DK1 slots have data")
+
+    # Four-hour blocks in local time: the spring DST day still has six block starts.
+    hours = 4
+
+    blocks = block_index(start, end, hours)
+
+    print(f"{len(blocks)} blocks, starting {[stamp.hour for stamp in blocks]}")
+
+    # Two fields side by side, zone on top: a direction a zone lacks is NaN.
+    parts = {"up": wide, "down": wide[["DK1"]]}
+    zones = ["DK1", "DK2"]
+
+    both = combine_levels(parts, pd.DatetimeIndex(wide.index), zones)
+
+    print(both)
 
 
 if __name__ == "__main__":
