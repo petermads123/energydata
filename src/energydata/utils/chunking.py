@@ -162,12 +162,24 @@ async def gather_chunked[T](
     windows = date_windows(start, end, span)
     semaphore = asyncio.Semaphore(limit) if limit is not None else None
 
+    failed = False
+
+    async def guarded(lo: datetime, hi: datetime) -> T:
+        nonlocal failed
+        if failed:  # a queued window must not start once another has failed
+            raise asyncio.CancelledError
+        try:
+            return await fetch(lo, hi)
+        except Exception:
+            failed = True
+            raise
+
     def bind(lo: datetime, hi: datetime) -> Callable[[], Awaitable[T]]:
         async def call() -> T:
             if semaphore is None:
-                return await fetch(lo, hi)
+                return await guarded(lo, hi)
             async with semaphore:
-                return await fetch(lo, hi)
+                return await guarded(lo, hi)
 
         return call
 
