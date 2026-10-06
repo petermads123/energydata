@@ -1,6 +1,6 @@
 # Energi Data Service client and day-ahead prices
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | done |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -559,8 +559,8 @@ only new dependency".
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | 9de9390 Concept; 7deb8a4 Plan; 8428720 Plan accepted; f210c18 Add Energi Data Service client and day-ahead prices (step 3); 229a023 Verify; b70a638 Concept amended at step 5; 5730dce Test; a9472b7 Concept check; plus WIP commits 00fb20a, 7ac5e22, f48a537, 8eef58b, e324ca2, d2103bc, 94a9781, b37baab. Every step 1 to 6 left a commit; no stray files. Reviewed against `origin/main` (local `main` is stale). |
+| Pushed to | `origin/feat/energidataservice-client` |
 
 ---
 
