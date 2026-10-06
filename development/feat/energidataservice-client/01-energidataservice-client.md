@@ -207,32 +207,32 @@ Rejected:
 |---|---|---|---|
 | `type TimeLike = date \| datetime \| str` | `utils.periods` | Accepted `start`/`end` input. A string is ISO 8601: date-only (`"2025-10-01"`) counts as a date, anything with a time as a timestamp. | A3 |
 | `DANISH_TZ: str = "Europe/Copenhagen"` | `utils.periods` | The default zone. | A1, A3 |
-| `resolve_period(start: TimeLike, end: TimeLike \| None = None, *, resolution: timedelta = timedelta(minutes=15), tz: str = DANISH_TZ) -> tuple[pd.Timestamp, pd.Timestamp]` | `utils.periods` | Half-open `[start, end)` in `tz`. Naive input is localised to `tz`. A date means local midnight. With `end=None`, a date gives the whole day and a timestamp gives one `resolution` slot. Raises `ValueError` naming the value when: `end <= start`; a timestamp is not on a `resolution` boundary (checked in UTC elapsed time); a naive time does not exist or is ambiguous in `tz`; a string does not parse; or `resolution` is not positive. | A3, A7 |
+| `resolve_period(start: TimeLike, end: TimeLike \| None = None, *, resolution: timedelta = timedelta(minutes=15), tz: str = DANISH_TZ) -> tuple[pd.Timestamp, pd.Timestamp]` | `utils.periods` | Half-open `[start, end)` in `tz`. Naive input is localised to `tz`. A date means local midnight. With `end=None`, a date gives the whole day and a timestamp gives one `resolution` slot. Raises `ValueError` naming the value when: `end <= start`; any timestamp bound (`start` or `end`, lone or not) is not on a `resolution` boundary; a naive time does not exist or is ambiguous in `tz`; a string does not parse; or `resolution` is not a positive whole divisor of one hour (calendar resolutions such as a day are left for the round that needs one). | A3, A7 |
 | `type BiddingZone = Literal["DK1", "DK2"]` | `utils.zones` | | A1 |
 | `BIDDING_ZONES: tuple[BiddingZone, ...] = ("DK1", "DK2")` | `utils.zones` | Supported zones, in default order. | A1 |
 | `normalize_bidding_zones(bidding_zones: BiddingZone \| Sequence[BiddingZone]) -> tuple[BiddingZone, ...]` | `utils.zones` | A single string becomes a one-tuple, and the given order is kept. An unknown zone (case-sensitive), a duplicate or an empty sequence raises `ValueError` naming the value and listing `BIDDING_ZONES`. | A1, A3, A7 |
-| `period_index(start: pd.Timestamp, end: pd.Timestamp, resolution: timedelta) -> pd.DatetimeIndex` | `utils.frames` | Every slot in `[start, end)`, stepped in elapsed time, in `start`'s zone, named `"time"`. A naive bound, `start >= end`, a non-positive resolution or a span that is not a whole multiple of it raises `ValueError`. | A1, A3, A4, A7 |
-| `records_to_wide(records: Sequence[Mapping[str, object]], *, time: str, column: str, value: str, tz: str = DANISH_TZ) -> pd.DataFrame` | `utils.frames` | Pivot long records into a float frame: index from field `time` (an ISO string, naive means UTC, converted to `tz`, named `"time"`), one column per distinct `column` value, holding `value` (`None` becomes NaN). Empty records give an empty frame with a tz-aware index. A duplicate (`time`, `column`) pair or a missing field raises `ValueError` naming it. | A1, A2, A7 |
+| `period_index(start: pd.Timestamp, end: pd.Timestamp, resolution: timedelta) -> pd.DatetimeIndex` | `utils.frames` | Every slot in `[start, end)`, stepped in elapsed time, in `start`'s zone, named `"time"`, dtype `datetime64[ns, tz]`. A naive bound, `start >= end`, a resolution that is not a positive whole divisor of one hour, or a span that is not a whole multiple of it raises `ValueError`. | A1, A3, A4, A7 |
+| `records_to_wide(records: Sequence[Mapping[str, object]], *, time: str, column: str, value: str, tz: str = DANISH_TZ) -> pd.DataFrame` | `utils.frames` | Pivot long records into a float frame: index from field `time` (an ISO string, naive means UTC, converted to `tz`, named `"time"`, dtype `datetime64[ns, tz]`), one column per distinct `column` value, holding `value` (`None` becomes NaN). Empty records give an empty frame with a tz-aware index. A duplicate (`time`, `column`) pair or a missing field raises `ValueError` naming it. | A1, A2, A7 |
 | `expand_to_resolution(frame: pd.DataFrame, source: timedelta, target: timedelta) -> pd.DataFrame` | `utils.frames` | Each row at `t`, covering `[t, t + source)`, is repeated at `t, t + target, …`. Values never cross into a slot whose own source row is missing, so a gap stays a gap. Raises `ValueError` unless `source` is a positive whole multiple of `target`. | A2, A7 |
-| `conform(frame: pd.DataFrame, index: pd.DatetimeIndex, columns: Sequence[str]) -> pd.DataFrame` | `utils.frames` | Reindex to exactly `index` × `columns`, as float64, with NaN where `frame` has nothing; rows outside `index` are dropped. A duplicate index in `frame` raises `ValueError`. | A1, A4, A7 |
-| `async gather_chunked[T](fetch: Callable[[datetime, datetime], Awaitable[T]], start: datetime, end: datetime, span: timedelta, *, limit: int \| None = None) -> list[T]` | `utils.chunking` | Every window from `date_windows` runs concurrently, at most `limit` at a time (`None` means unbounded), and the results come back in window order. The first exception propagates and the remaining windows are cancelled. `limit < 1` raises `ValueError`. | A6 |
+| `conform(frame: pd.DataFrame, index: pd.DatetimeIndex, columns: Sequence[str]) -> pd.DataFrame` | `utils.frames` | Reindex to exactly `index` × `columns`, as float64, with NaN where `frame` has nothing; rows outside `index` are dropped; the output index is exactly `index`. A duplicate index in `frame` raises `ValueError`. | A1, A4, A7 |
+| `async gather_chunked[T](fetch: Callable[[datetime, datetime], Awaitable[T]], start: datetime, end: datetime, span: timedelta, *, limit: int \| None = None) -> list[T]` | `utils.chunking` | Every window from `date_windows` runs concurrently, at most `limit` at a time (`None` means unbounded), and the results come back in window order. If windows fail, the remaining ones are cancelled and the exception of the lowest-index failed window is raised, chained from the group; callers never see an `ExceptionGroup`. `limit < 1` raises `ValueError`. | A6 |
 | `ApiClient(base_url: str, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, headers: Mapping[str, str] \| None = None, transport: httpx.AsyncBaseTransport \| None = None)` | `utils.api_client` | Source-agnostic base. `max_concurrency < 1` and an empty `base_url` raise `ValueError`. `transport` exists for tests (`httpx.MockTransport`). Read-only properties: `base_url: str`, `max_concurrency: int`, `closed: bool`. | A5, A6 |
-| `async ApiClient.request(self, method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None) -> Parsed` | `utils.api_client` | One request on the client's loop, under the semaphore, through `async_request_with_retry`, parsed with `read_response`. It errors exactly as those do. | A5, A6 |
+| `async ApiClient.request(self, method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None) -> Parsed` | `utils.api_client` | One request on the client's loop, under the semaphore, through `async_request_with_retry`, parsed with `read_response`. It errors exactly as those do. Awaiting it on any loop other than the client's raises `RuntimeError`: it is the extension point for subclasses and may only run inside `run`. | A5, A6 |
 | `ApiClient.run[T](self, work: Callable[[], Awaitable[T]]) -> T` | `utils.api_client` | Run `work()` on the client's loop and block until it finishes, re-raising its exception. Safe from any thread, including one with a running loop. Raises `RuntimeError` when the client is closed, or when called from the client's own loop thread (which would deadlock). | A6 |
 | `ApiClient.close(self) -> None` | `utils.api_client` | Close the HTTP client, stop the loop and join the thread. Idempotent. | A5 |
 | `ApiClient.__enter__(self) -> Self`, `ApiClient.__exit__(self, *exc_info: object) -> None` | `utils.api_client` | Context manager; exit calls `close()`. | A5 |
 | `type Record = dict[str, JsonValue]` | `energidataservice.client` | One dataset row. | A5 |
 | `EnergiDataServiceError(Exception)` | `energidataservice.client` | The payload is not what the API promises: no `records` list, or fewer records than its `total`. | A5 |
 | `EnergiDataServiceClient(*, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, max_span: timedelta = timedelta(days=31), transport: httpx.AsyncBaseTransport \| None = None)` | `energidataservice.client` | `ApiClient` on `BASE_URL = "https://api.energidataservice.dk"`. A non-positive `max_span` raises `ValueError`. | A5 |
-| `async EnergiDataServiceClient.fetch_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None) -> list[Record]` | `energidataservice.client` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently with `gather_chunked`. The params are: `start`/`end` in UTC as `YYYY-MM-DDTHH:MM`, `timezone=UTC`, `limit=0`, `filter` as compact JSON, and `columns` comma-joined. The windows' records are concatenated in window order. Raises `EnergiDataServiceError` for an unexpected payload, plus the errors of `request`. Naive bounds raise `ValueError`. | A5, A6 |
-| `EnergiDataServiceClient.get_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None) -> list[Record]` | `energidataservice.client` | The sync form: `self.run(lambda: self.fetch_dataset(...))`. | A5, A6 |
+| `async EnergiDataServiceClient.fetch_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `energidataservice.client` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently with `gather_chunked`. The params are: `start`/`end` in UTC as `YYYY-MM-DDTHH:MM`, `timezone=UTC`, `limit=0`, `filter` as compact JSON, and `columns` comma-joined. The windows' records are concatenated in window order. Raises `EnergiDataServiceError` for an unexpected payload, plus the errors of `request`. Naive bounds raise `ValueError`. Like `request`, it raises `RuntimeError` when awaited outside the client's loop. Sends `sort=<sort_by> asc` when `sort_by` is given. | A5, A6 |
+| `EnergiDataServiceClient.get_dataset(self, dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `energidataservice.client` | The sync form: `self.run(lambda: self.fetch_dataset(...))`. | A5, A6 |
 | `get_day_ahead_prices(start: TimeLike, end: TimeLike \| None = None, bidding_zones: BiddingZone \| Sequence[BiddingZone] = BIDDING_ZONES, *, client: EnergiDataServiceClient \| None = None) -> pd.DataFrame` | `energidataservice.day_ahead` | See A1 to A4. The docstring carries the output table: EUR/MWh excl. VAT, 15-minute, wide, `DK1`/`DK2`, sources *DayAheadPrices* (`TimeUTC`, `PriceArea`, `DayAheadPriceEUR`) and *Elspotprices* (`HourUTC`, `PriceArea`, `SpotPriceEUR`), hourly history forward-filled, NaN for unpublished slots. Without `client`, it creates one and closes it; a given client is left open. | A1–A4, A6, A8 |
 | `main() -> None` in each new module | all | Showcase. The utils showcases are offline (a `MockTransport` for `api_client`). `client` and `day_ahead` call the live API. | — |
 
 ### Implementation guide
 
 1. **`pyproject.toml`.** Add `pandas>=3.0,<4` to `dependencies` and `pandas-stubs` to
-   `dev`. Create `.venv` with `pip install -e ".[dev]"` if it is missing, so the gates run
+   `dev`, pinned to the minor series matching pandas 3.0 (e.g. `pandas-stubs>=3.0,<3.1`). Create `.venv` with `pip install -e ".[dev]"` if it is missing, so the gates run
    the project's tools.
 2. **`utils/zones.py`**, then **`utils/periods.py`**.
    - String parsing: try `date.fromisoformat` first. If that fails, use `pd.Timestamp(s)`;
@@ -248,14 +248,21 @@ Rejected:
    - `expand_to_resolution`: repeat each row `source // target` times and add offsets
      `k * target`.
    - `conform`: `reindex(index=…, columns=…)` then `astype("float64")`.
+   - pandas 3 infers datetime units, so `period_index` and `records_to_wide` both call
+     `.as_unit("ns")`; every frame they build has a `datetime64[ns, tz]` index.
 4. **`utils/chunking.py` → `gather_chunked`.** Use `date_windows`, an optional
    `asyncio.Semaphore`, and an `asyncio.TaskGroup`, so the first failure cancels the rest.
-   Collect results by window position.
+   Collect results by window position. Catch the `ExceptionGroup` and re-raise the
+   lowest-index failed window's exception `from` the group. Put that re-raise rule in a
+   private helper the day-ahead module reuses.
 5. **`utils/api_client.py`.**
    - The loop thread is created lazily under a `threading.Lock`. The `AsyncClient` and the
      semaphore are created on the loop thread by an init coroutine.
-   - `run` checks `threading.get_ident()` against the loop thread, and uses
-     `run_coroutine_threadsafe(...).result()`.
+   - `run` checks `threading.get_ident()` against the loop thread, then submits a private
+     `async def _call(): return await work()` with `run_coroutine_threadsafe`, so `work()`
+     is invoked on the loop thread. If `.result()` is interrupted (KeyboardInterrupt),
+     cancel the concurrent future before re-raising, so nothing keeps running on the loop.
+   - `request` checks `asyncio.get_running_loop() is self._loop`, else `RuntimeError`.
    - `close` runs `aclose()` on the loop, then `loop.call_soon_threadsafe(loop.stop)`,
      joins the thread and closes the loop.
    - The thread is a daemon, so a client that is never closed does not hang interpreter
@@ -269,8 +276,11 @@ Rejected:
    - Resolve the period, normalise the zones and build the index.
    - Request the hourly dataset over the period widened to whole hours (floor the start,
      ceil the end in UTC), so a period starting mid-hour still gets its hour's price.
-   - Gather the two `fetch_dataset` calls with `asyncio.gather` inside one `client.run`.
-     The client's semaphore caps the total.
+   - Run the two `fetch_dataset` calls in a TaskGroup inside one `client.run`, with the
+     same lowest-index re-raise rule as `gather_chunked`, so a failure in one cancels the
+     other before an own client is closed. The client's semaphore caps the total.
+   - Pass `filters={"PriceArea": list(zones)}`, `columns=[<time field>, "PriceArea",
+     <EUR field>]` and `sort_by=<time field>` to each.
    - Pivot each with `records_to_wide`, expand the hourly one 1 h → 15 min, then
      `quarter.combine_first(hourly)` so the 15-minute data wins.
    - Finish with `conform(…, index, zones)`.
@@ -279,20 +289,22 @@ Rejected:
    update the dependency test in `test_readers.py`. Retry tests use
    `RetryPolicy(base_delay=0.0, max_delay=0.0)`.
 10. **Docs.** Add the README endpoints section and update `STRUCTURE.md` and the two rules
-    files.
+    files. `STRUCTURE.md` must name every new `.py` path in full — `src/…` modules and
+    `tests/…` files, `tests/conftest.py` included — because the stop gate matches paths
+    verbatim.
 
 ### Test intents
 
 | # | Must prove | Covers |
 |---|---|---|
-| T1 | `resolve_period` covers: a date alone gives a whole day of 92, 96 or 100 quarter-hours (spring DST, normal, autumn DST); a timestamp alone gives one slot; `end` is exclusive; naive, aware and string inputs; aware input in another zone is converted; and every `ValueError` case names the value. | A3 |
+| T1 | `resolve_period` covers: a date alone gives a whole day of 92, 96 or 100 quarter-hours (spring DST, normal, autumn DST); a timestamp alone gives one slot; `end` is exclusive; naive, aware and string inputs; aware input in another zone is converted; and every `ValueError` case names the value, including a misaligned `start` or `end` when both are given and a resolution that does not divide one hour. | A3 |
 | T2 | `normalize_bidding_zones`: a string, a list in a non-default order and the default; unknown, lowercase, duplicate and empty inputs raise. | A1, A3 |
-| T3 | `period_index` is half-open and correct across both DST changes. `records_to_wide` handles UTC strings, `None` values, empty input and duplicates. `expand_to_resolution` fills exactly the quarters of present hours and leaves gaps as gaps. `conform` pads with NaN, keeps column order and drops out-of-period rows. | A1, A2, A4, A7 |
-| T4 | `gather_chunked` returns results in window order even when windows finish out of order. Its in-flight count never exceeds `limit` and does exceed 1 when allowed. The first error propagates and cancels the rest. | A6 |
-| T5 | `ApiClient`: it hits `base_url + path`; a 503 then 200 is retried through the wrapper; in-flight requests never exceed `max_concurrency`; `run` works from inside a running event loop and from several threads; the client is reusable across many `run` calls; `close` is idempotent; `run` after close raises; the context manager closes; a `run` from the loop thread raises. | A5, A6 |
-| T6 | `EnergiDataServiceClient` sends the exact params (UTC start/end, `timezone`, `limit=0`, `filter` JSON, `columns`). A period longer than `max_span` becomes several concurrent requests whose records are concatenated in time order. A `total` larger than the records count and a missing `records` key both raise `EnergiDataServiceError`. An HTTP 400 surfaces as `httpx.HTTPStatusError`. | A5, A6 |
-| T7 | `get_day_ahead_prices` on mocked data: a 15-minute-only period; an hourly-only period forward-filled to quarters; a period spanning the switch, where the 15-minute data wins on overlap; a lone date and a lone mid-hour timestamp; a future period returning all NaN of the right shape; a zone subset and its order; both datasets requested; a passed client left open and an own client closed. | A1–A4, A6 |
-| T8 | No module under `utils/` names Energi Data Service, its datasets or its fields (a source scan). The runtime dependencies are exactly `httpx` and `pandas`. No test reaches the network (the conftest guard and its check). The README endpoints table names `get_day_ahead_prices` with EUR/MWh, 15 min, wide and DK1/DK2. | A7, A8 |
+| T3 | `period_index` is half-open, `datetime64[ns, tz]`, correct across both DST changes, and rejects a resolution that does not divide one hour. `records_to_wide` handles UTC strings, `None` values, empty input and duplicates. `expand_to_resolution` fills exactly the quarters of present hours and leaves gaps as gaps. `conform` pads with NaN, keeps column order and drops out-of-period rows. | A1, A2, A4, A7 |
+| T4 | `gather_chunked` returns results in window order even when windows finish out of order. Its in-flight count never exceeds `limit` and does exceed 1 when allowed. A failure cancels the rest and raises the lowest-index window's own exception, never an `ExceptionGroup`. | A6 |
+| T5 | `ApiClient`: it hits `base_url + path`; a 503 then 200 is retried through the wrapper; in-flight requests never exceed `max_concurrency`; `run` works from inside a running event loop and from several threads; the client is reusable across many `run` calls; `close` is idempotent; `run` after close raises; the context manager closes; a `run` from the loop thread raises; awaiting `request` on a foreign loop raises `RuntimeError`; interrupting `run` cancels the work. | A5, A6 |
+| T6 | `EnergiDataServiceClient` sends the exact params (UTC start/end, `timezone`, `limit=0`, `filter` JSON, `columns`, `sort`). A period longer than `max_span` becomes several concurrent requests whose records are concatenated in window order. A `total` larger than the records count and a missing `records` key both raise `EnergiDataServiceError`. An HTTP 400 surfaces as `httpx.HTTPStatusError`. | A5, A6 |
+| T7 | `get_day_ahead_prices` on mocked data: a 15-minute-only period; an hourly-only period forward-filled to quarters; a period spanning the switch, where the 15-minute data wins on overlap; a lone date and a lone mid-hour timestamp; a future period returning all NaN of the right shape; a zone subset and its order; both datasets requested; a passed client left open and an own client closed; the captured requests carry the `PriceArea` filter and the columns; when one dataset returns HTTP 400 the call raises `httpx.HTTPStatusError` and its own client is still closed cleanly. | A1–A4, A6 |
+| T8 | No module under `utils/` names Energi Data Service, its datasets or its fields (a source scan). The runtime dependencies are exactly `httpx` and `pandas`. No test reaches the network (the conftest guard and its check). The README endpoints table and `get_day_ahead_prices.__doc__` both name EUR/MWh, 15 min, wide, DK1/DK2, *DayAheadPrices* and *Elspotprices*. | A7, A8 |
 
 ### Coverage check
 
@@ -306,6 +318,32 @@ Rejected:
 - **Every API entry traces to a criterion.** `DANISH_TZ` traces to A1 and A3, `Record`
   and `EnergiDataServiceError` to A5, and each `main` follows the module convention.
 
+### Critique
+
+Read by the `plan-critic` (verdict: accept with changes). Every finding applied:
+
+1. `TaskGroup` raises `ExceptionGroup`, not the first exception → applied: lowest-index
+   window's exception re-raised from the group (API, guide 4, T4).
+2. `asyncio.gather` leaves the other dataset running on failure → applied: TaskGroup with
+   the same rule in guide 8; T7 covers an HTTP 400 with clean close.
+3. `run` did not say which thread calls `work()` → applied: `work()` runs on the loop
+   thread via a private wrapper coroutine; interrupted `run` cancels the work (guide 5, T5).
+4. Public async methods widen "async is internal only" and break on a foreign loop →
+   applied option (a): they stay public as the subclass extension point but raise
+   `RuntimeError` unless awaited on the client's loop (API, guide 5, T5). Public *dataset
+   functions* stay sync only, as agreed.
+5. Generic `resolution` breaks above one hour → applied: must divide one hour exactly,
+   else `ValueError` (API, T1, T3).
+6. pandas 3 unit inference → applied: `datetime64[ns, tz]` everywhere (API, guide 3, Risks).
+7. Endpoint did not use `filters`/`columns` → applied (guide 8, T7).
+8. `end` exclusivity and sort order assumed → applied: Risks entry, `sort_by` parameter,
+   T6 says window order.
+9. A8 docstring not tested; `pandas-stubs` unpinned → applied (T8, guide 1).
+10. Shorthand test names would fail the stop gate → applied (guide 10).
+
+Minor: a misaligned `start`/`end` is rejected even when both are given — stated in the API
+and T1, wider than section 1 only by applying the same rule to both bounds.
+
 ### Risks
 
 - **The live API is unreachable from the build container** (proxy 403). The `client` and
@@ -317,6 +355,13 @@ Rejected:
 - **pandas-stubs strictness.** mypy may reject idiomatic pandas calls. Narrow with typed
   locals or a `cast`. A `# type: ignore[code]  # reason` is allowed where the stub is
   wrong. Do not halt.
+- **pandas 3 datetime units.** Strings, `Timestamp` and `date_range` may infer different
+  units (`s`/`us`/`ns`), and `assert_frame_equal` compares dtypes. Normalise with
+  `.as_unit("ns")` as in guide 3; do not loosen the assertions.
+- **Assumed API semantics:** that `end` is exclusive and that `sort=… asc` is honoured.
+  These are constants the user confirms by running the showcase. If `end` were inclusive,
+  boundary records would repeat across windows and `records_to_wide` would raise on the
+  duplicate. Fixing that is a one-line change to the window end, not a halt.
 - **Thread and loop lifecycle bugs** (a hang on `close`, a leaked thread in tests). Every
   test that creates a client closes it via the context manager. A test that hangs gets a
   timeout via `concurrent.futures` in the test itself. A hang the build cannot fix in two
