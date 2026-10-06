@@ -20,8 +20,8 @@ type Record = dict[str, JsonValue]
 class EnergiDataServiceError(Exception):
     """The payload is not what the API promises.
 
-    Raised when a response has no `records` list, or fewer records than its
-    `total`.
+    Raised when a response is not a JSON object, has no `records` list, has a
+    record that is not a JSON object, or has fewer records than its `total`.
     """
 
 

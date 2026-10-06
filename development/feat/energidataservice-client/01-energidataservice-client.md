@@ -1,6 +1,6 @@
 # Energi Data Service client and day-ahead prices
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | done |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -509,14 +509,49 @@ Edge cases considered and deliberately skipped, with reasons:
 
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | tz-aware Copenhagen 15-min index over exactly `[start, end)`, one float column per zone, order kept | yes | `day_ahead.py:84-86,113-128` builds `period_index` and `conform`s each side to it; `tests/test_day_ahead.py::test_day_ahead_*` (zone subset and order, index exactness), `test_frames.py::test_period_index_*`, `test_zones.py::test_normalize_bidding_zones_*`. Mocked HTTP only. |
+| A2 | Hourly repeated over :00/:15/:30/:45 before the switch; from it only DayAheadPrices, null/missing NaN; spanning period combines; each dataset requested only when overlapped (amended, fixed switch) | yes | `SWITCH` at `day_ahead.py:28`; hourly side `expand_to_resolution` then `conform` to `index < SWITCH`, quarter side to `index >= SWITCH`, no `combine_first` (lines 113-128); requests gated by `hourly_period`/`quarter_period` (89-101). Tests: hourly-era fill and gap, null and missing 15-min value NaN with hourly data present, span, per-side single-dataset requests parametrized at the boundary. Ran a mocked span-the-switch call by hand: 2 requests, null 15-min slots NaN. |
+| A3 | Naive as Danish time; lone date whole local day (92/96/100); lone timestamp one row; exclusive end; `ValueError` naming the value | yes | Hand run on a mock: `date(2026,3,29)` 92 rows, `date(2026,10,25)` 100 rows; `2026-01-01T00:07` raises "start '2026-01-01T00:07:00+01:00' is not on a 0:15:00 boundary". `test_periods.py::test_resolve_period_*`, `test_zones.py` (unknown, lowercase, duplicate, empty all name the value). |
+| A4 | Unpublished slots present as NaN, all-NaN frame for a future period | yes | `conform` pads NaN; `test_day_ahead.py` future-period test, `test_frames.py::test_conform_*`. |
+| A5 | Source-agnostic `ApiClient` in utils; Energi Data Service client subclasses it, fetches by name with period/filter/columns, every record, never a truncated page; all calls go through it | yes | `utils/api_client.py`, `client.py:28` subclass, `limit=0` plus `total` shortfall check (`_records`, client.py:200); `test_api_client.py`, `test_energidataservice_client.py` (exact params, payload checks). `grep` shows `day_ahead.py` has no HTTP except via `client.fetch_dataset`. `utils` scan test confirms no EDS specifics. |
+| A6 | Concurrent requests up to configurable cap; sync public call that works inside a running loop | yes | `gather_chunked` + `ApiClient` semaphore and own loop thread; `test_api_client.py` (run inside a running loop, several threads, in-flight never over cap), `test_chunking.py::test_gather_chunked_*`, `_fetch_sides` gathers both datasets in one `run`. |
+| A7 | Period, zone, frame shaping in utils with no EDS specifics, used by `get_day_ahead_prices` | yes | `utils/periods.py`, `zones.py`, `frames.py`; imports at `day_ahead.py:8-16`; `test_utils_modules_name_no_energi_data_service_specifics`. |
+| A8 | README endpoint row and docstring list currency, unit, resolution, format, zones, sources; tests make no network calls; pandas only new runtime dependency | yes | README "Endpoints" table row and `get_day_ahead_prices.__doc__` checked by `test_readme_endpoint_row_names_the_output_contract` and `test_day_ahead_docstring_names_the_output_contract`; `tests/conftest.py` guard plus `test_the_no_network_guard_refuses_a_real_transport`; `pyproject.toml` dependencies `httpx`, `pandas` only (`test_httpx_and_pandas_are_the_only_runtime_dependencies`). |
+
+Evidence caveat: the live API is unreachable from this container (proxy 403), so live-only
+behaviour (dataset and field names, `end` exclusivity, `sort` honoured) rests on mocked
+tests and the user running the showcases, as the plan's Risks say. `ruff check`, `mypy` and
+`pytest` re-run at this step: clean, 1143 passed.
 
 Drift found, and what was done about it:
 
+- **Out of scope**: nothing from the exclusion list was built (one endpoint, no async public
+  functions, no caching or FX, `hello_world` untouched).
+- **Surface**: `SWITCH` and the dataset/field constants are public module constants beyond
+  the plan's list (`SWITCH` was part of the user's step 5 amendment, constants were in guide
+  8). Accepted, documented in the rules file.
+- **Structure auditor** (3 doc items): all applied. `EnergiDataServiceClient` row now states
+  the `max_span` whole-minute rule; `fetch_dataset` row lists its `ValueError`s;
+  `resolve_period` row lists unknown `tz`. The stale `EnergiDataServiceError` docstring
+  (it listed two of four cases) was fixed to match.
+- **`_gather_ordered` imported across modules**: kept. The plan (API note, guide 4 and 8)
+  explicitly called for a private helper that `day_ahead.py` reuses, and section 3 records
+  it. Making it public would add API the concept did not ask for. Left as an open item for
+  step 8 as a `DEVELOPMENT.md` note, not a criterion failure.
+- No unmet criteria; no criterion found wrong; no halt.
+
 ### Earlier rounds still hold
+
+Round 1 of this branch is the current round; no earlier rounds. Sanity note on the merged
+`feat/shared-http-utils`: the round edited its tests (guard moved to `tests/conftest.py`,
+dependency test now `httpx` and `pandas`). `test_retry.py` and `test_readers.py` pass in the
+1143-green run, and `test_the_no_network_guard_refuses_a_real_transport` still proves the
+guard works. The edited dependency assertion reflects that round's A9 being scoped to "the
+only new dependency".
 
 | Round | # | Criterion | Still met | Evidence |
 |---|---|---|---|---|
+| (none) | | | | |
 
 ---
 

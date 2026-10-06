@@ -79,7 +79,7 @@ runnable as `python -m energydata.utils.<module>`.
 |---|---|
 | `type TimeLike = date \| datetime \| str` | `start`/`end` input; a string is ISO 8601, date-only counts as a date. |
 | `DANISH_TZ: str` | `"Europe/Copenhagen"`. |
-| `resolve_period(start: TimeLike, end: TimeLike \| None = None, *, resolution: timedelta = timedelta(minutes=15), tz: str = DANISH_TZ) -> tuple[pd.Timestamp, pd.Timestamp]` | Half-open `[start, end)` in `tz`. Naive is read as `tz`; a date is local midnight; no `end` means the whole day for a date and one slot for a timestamp. `ValueError` for `end <= start`, a misaligned timestamp bound, a nonexistent or ambiguous naive time, an unparseable string, or a `resolution` that is not a positive whole divisor of an hour. |
+| `resolve_period(start: TimeLike, end: TimeLike \| None = None, *, resolution: timedelta = timedelta(minutes=15), tz: str = DANISH_TZ) -> tuple[pd.Timestamp, pd.Timestamp]` | Half-open `[start, end)` in `tz`. Naive is read as `tz`; a date is local midnight; no `end` means the whole day for a date and one slot for a timestamp. `ValueError` for `end <= start`, a misaligned timestamp bound, a nonexistent or ambiguous naive time, an unparseable string, an unknown `tz`, or a `resolution` that is not a positive whole divisor of an hour. |
 | `main() -> None` | Showcase. |
 
 ## `src/energydata/utils/zones.py`
