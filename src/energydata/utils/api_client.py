@@ -213,8 +213,14 @@ class ApiClient:
                     daemon=True,
                 )
                 thread.start()
+                try:
+                    asyncio.run_coroutine_threadsafe(self._open(), loop).result()
+                except BaseException:
+                    loop.call_soon_threadsafe(loop.stop)  # leave nothing half-started
+                    thread.join()
+                    loop.close()
+                    raise
                 self._loop, self._thread = loop, thread
-                asyncio.run_coroutine_threadsafe(self._open(), loop).result()
             return self._loop
 
     @staticmethod

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import math
+import re
 import tomllib
 import xml.etree.ElementTree as ET
 import zipfile
@@ -676,11 +677,11 @@ def test_read_response_malformed_body_names_the_format() -> None:
 # --- A9: dependencies --------------------------------------------------------
 
 
-def test_httpx_is_the_only_runtime_dependency() -> None:
+def test_httpx_and_pandas_are_the_only_runtime_dependencies() -> None:
     root = Path(__file__).resolve().parent.parent
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 
     dependencies = project["project"]["dependencies"]
 
-    assert len(dependencies) == 1
-    assert dependencies[0].startswith("httpx")
+    names = sorted(re.split(r"[<>=!~\s\[]", dep, maxsplit=1)[0] for dep in dependencies)
+    assert names == ["httpx", "pandas"]

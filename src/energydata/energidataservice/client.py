@@ -52,11 +52,13 @@ class EnergiDataServiceClient(ApiClient):
             transport: An `httpx` transport, for tests.
 
         Raises:
-            ValueError: If `max_span` is not positive or `max_concurrency` is
-                below 1.
+            ValueError: If `max_span` is not a positive whole number of minutes
+                or `max_concurrency` is below 1.
         """
-        if max_span <= timedelta(0):
-            raise ValueError(f"max_span must be positive, got {max_span!r}")
+        if max_span <= timedelta(0) or max_span % timedelta(minutes=1):
+            raise ValueError(
+                f"max_span must be a positive whole number of minutes, got {max_span!r}"
+            )
         super().__init__(
             BASE_URL,
             policy=policy,
@@ -94,15 +96,31 @@ class EnergiDataServiceClient(ApiClient):
             The records of every window, concatenated in window order.
 
         Raises:
-            ValueError: If `start` or `end` is naive or `start >= end`.
+            ValueError: If `start` or `end` is naive, has seconds, or
+                `start >= end`.
             RuntimeError: If awaited outside the client's own loop.
             EnergiDataServiceError: If a payload has no `records` list or
                 fewer records than its `total`.
             httpx.HTTPStatusError: For a non-retryable error status.
         """
+        for name, bound in (("start", start), ("end", end)):
+            if bound.second or bound.microsecond:
+                raise ValueError(
+                    f"{name} must be on a whole minute, the API takes no seconds, "
+                    f"got {bound.isoformat()!r}"
+                )
+        values = (
+            {
+                name: [v] if isinstance(v, str) else list(v)
+                for name, v in filters.items()
+            }
+            if filters
+            else None
+        )
+        fields = [columns] if isinstance(columns, str) else columns
 
         async def fetch_window(lo: datetime, hi: datetime) -> list[Record]:
-            return await self._fetch_window(dataset, lo, hi, filters, columns, sort_by)
+            return await self._fetch_window(dataset, lo, hi, values, fields, sort_by)
 
         windows = await gather_chunked(fetch_window, start, end, self._max_span)
         return [record for window in windows for record in window]
@@ -132,7 +150,9 @@ class EnergiDataServiceClient(ApiClient):
             The records of every window, concatenated in window order.
 
         Raises:
-            ValueError: If `start` or `end` is naive or `start >= end`.
+            ValueError: If `start` or `end` is naive, has seconds, or
+                `start >= end`.
+            RuntimeError: If the client is closed.
             EnergiDataServiceError: If a payload has no `records` list or
                 fewer records than its `total`.
             httpx.HTTPStatusError: For a non-retryable error status.

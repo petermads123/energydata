@@ -44,6 +44,7 @@ def period_index(
         if stamp.tzinfo is None:
             raise ValueError(f"{name} must be timezone-aware, got {stamp!r}")
     _check_resolution(resolution)
+    end = end.tz_convert(start.tz)  # bounds in different zones are one instant each
     if start >= end:
         raise ValueError(f"start must be before end, got start={start!r} end={end!r}")
     if (end - start) % pd.Timedelta(resolution) != pd.Timedelta(0):
@@ -97,10 +98,16 @@ def records_to_wide(
         return pd.DataFrame(index=empty, dtype="float64")
     try:
         stamps = pd.DatetimeIndex(
-            pd.to_datetime(cast(list[str], times), utc=True)
+            pd.to_datetime(cast(list[str], times), utc=True, format="ISO8601")
         ).tz_convert(tz)
     except (ValueError, TypeError) as exc:
         raise ValueError(f"field {time!r} holds an unparseable time: {exc}") from exc
+    unset = pd.Series(stamps).isna()
+    if unset.any():
+        missing = int(unset.argmax())
+        raise ValueError(
+            f"field {time!r} holds no time in record {missing}: {times[missing]!r}"
+        )
     try:
         numbers = pd.Series(values, dtype="float64")
     except (ValueError, TypeError) as exc:

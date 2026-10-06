@@ -1,6 +1,7 @@
 """Resolve a caller's `start` and `end` arguments into a half-open period."""
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 
@@ -36,14 +37,15 @@ def _bound(value: TimeLike, name: str, tz: str) -> tuple[pd.Timestamp, bool]:
     """Resolve one argument to a timestamp in `tz`; also say if it was a date."""
     is_date = False
     if isinstance(value, str):
+        text = value
         try:
-            value = date.fromisoformat(value)
+            value = date.fromisoformat(text)
         except ValueError:
             try:
-                value = pd.Timestamp(value).to_pydatetime(warn=False)
+                value = datetime.fromisoformat(text)
             except ValueError as exc:
                 raise ValueError(
-                    f"{name} is not an ISO 8601 date or time: {value!r}"
+                    f"{name} is not an ISO 8601 date or time: {text!r}"
                 ) from exc
     if isinstance(value, datetime):  # before `date`: a datetime is a date
         stamp = pd.Timestamp(value)
@@ -96,10 +98,14 @@ def resolve_period(
     Raises:
         ValueError: If `end <= start`, a timestamp bound is not on a
             `resolution` boundary, a naive time does not exist or is
-            ambiguous in `tz`, a string does not parse, or `resolution` is not
-            a positive whole divisor of one hour.
+            ambiguous in `tz`, a string does not parse, `tz` is not a known zone,
+            or `resolution` is not a positive whole divisor of one hour.
     """
     _check_resolution(resolution)
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown time zone {tz!r}") from exc
     first, start_is_date = _bound(start, "start", tz)
     if end is None:
         if start_is_date:
