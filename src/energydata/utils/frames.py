@@ -1,4 +1,4 @@
-"""Shape time series into frames: a full period index, wide pivots and gap padding."""
+"""Shape time series into frames: period and block indexes, wide pivots, two-level columns and gap padding."""
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
