@@ -39,7 +39,8 @@ here, but everything in this file is in context every session.
 ```
 src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
-    utils/              shared HTTP utilities: retrying requests, body readers, date-range chunking
+    utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
+    energidataservice/  Energi Data Service: client and `get_day_ahead_prices`
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -53,13 +54,29 @@ STRUCTURE.md            this file
 
 ## Subpackage: `src/energydata/utils/`
 
-Shared by the future source subpackages; `httpx` is the only runtime dependency. Detail
+Shared by the source subpackages; `httpx` and `pandas` are the runtime dependencies. Detail
 (signatures and rules) lives in `.claude/rules/structure-utils.md`, loaded when working in
 this subpackage. Modules: `src/energydata/utils/__init__.py` (re-exports every public name),
 `src/energydata/utils/retry.py` (retrying sync/async request wrappers),
-`src/energydata/utils/readers.py` (JSON/XML/CSV/ZIP body readers) and
-`src/energydata/utils/chunking.py` (date-range windows and chunked fetch). Tests:
-`tests/test_retry.py`, `tests/test_readers.py`, `tests/test_chunking.py`.
+`src/energydata/utils/readers.py` (JSON/XML/CSV/ZIP body readers),
+`src/energydata/utils/chunking.py` (date-range windows, chunked and concurrent chunked
+fetch), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
+with its own event loop), `src/energydata/utils/periods.py` (`start`/`end` resolution),
+`src/energydata/utils/zones.py` (bidding-zone normalisation) and
+`src/energydata/utils/frames.py` (period index, wide pivot, resolution expansion, NaN
+padding). Tests: `tests/test_retry.py`, `tests/test_readers.py`, `tests/test_chunking.py`,
+`tests/test_api_client.py`, `tests/test_periods.py`, `tests/test_zones.py`,
+`tests/test_frames.py`.
+
+## Subpackage: `src/energydata/energidataservice/`
+
+Energi Data Service endpoints on top of `utils`. Detail lives in
+`.claude/rules/structure-energidataservice.md`, loaded when working in this subpackage.
+Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public names),
+`src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`) and
+`src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`). Tests:
+`tests/conftest.py` (the autouse no-network guard), `tests/test_energidataservice_client.py`
+and `tests/test_day_ahead.py`.
 
 ## Package: `src/energydata/`
 

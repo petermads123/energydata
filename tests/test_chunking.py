@@ -1,11 +1,18 @@
 import asyncio
-from collections.abc import Callable
+import contextlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta, tzinfo
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from energydata.utils import async_fetch_chunked, date_windows, fetch_chunked
+from energydata.utils import (
+    async_fetch_chunked,
+    date_windows,
+    fetch_chunked,
+    gather_chunked,
+)
 
 CPH = ZoneInfo("Europe/Copenhagen")
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -380,3 +387,247 @@ def test_async_fetch_chunked_validation_error_surfaces_on_await() -> None:
 
     with pytest.raises(ValueError, match="start must be before end"):
         asyncio.run(coroutine)
+
+
+# --- gather_chunked (T4) ------------------------------------------------------
+
+TIMEOUT = 10.0  # a hang fails the test instead of the suite
+
+
+def _gather(
+    fetch: Callable[[datetime, datetime], Awaitable[object]],
+    start: datetime = T0,
+    end: datetime = T0 + timedelta(days=3),
+    span: timedelta = DAY,
+    *,
+    limit: int | None = None,
+) -> list[object]:
+    async def go() -> list[object]:
+        return await asyncio.wait_for(
+            gather_chunked(fetch, start, end, span, limit=limit), TIMEOUT
+        )
+
+    return asyncio.run(go())
+
+
+def test_gather_chunked_returns_results_in_window_order_when_finishing_out_of_order() -> (
+    None
+):
+    async def fetch(lo: datetime, hi: datetime) -> datetime:  # noqa: ARG001
+        await asyncio.sleep((T0 + timedelta(days=3) - lo) / timedelta(days=1) * 0.01)
+        return lo
+
+    results = _gather(fetch)
+
+    assert results == [w[0] for w in date_windows(T0, T0 + timedelta(days=3), DAY)]
+
+
+def test_gather_chunked_passes_each_window_its_exact_bounds() -> None:
+    seen: list[tuple[datetime, datetime]] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> None:
+        seen.append((lo, hi))
+
+    _gather(fetch, end=T0 + timedelta(days=2, hours=6))
+
+    assert sorted(seen) == date_windows(T0, T0 + timedelta(days=2, hours=6), DAY)
+
+
+def test_gather_chunked_single_window_gets_the_identical_bounds() -> None:
+    end = T0 + timedelta(hours=5)
+    seen: list[tuple[datetime, datetime]] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> str:
+        seen.append((lo, hi))
+        return "only"
+
+    results = _gather(fetch, end=end, span=DAY)
+
+    assert results == ["only"]
+    assert seen[0][0] is T0
+    assert seen[0][1] is end
+
+
+def test_gather_chunked_keeps_falsy_results() -> None:
+    async def fetch(lo: datetime, hi: datetime) -> int:  # noqa: ARG001
+        return 0
+
+    assert _gather(fetch) == [0, 0, 0]
+
+
+@pytest.mark.parametrize(("limit", "peak"), [(1, 1), (2, 2), (5, 5), (None, 5)])
+def test_gather_chunked_peak_in_flight_matches_the_limit(
+    limit: int | None, peak: int
+) -> None:
+    in_flight = 0
+    seen = 0
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        nonlocal in_flight, seen
+        in_flight += 1
+        seen = max(seen, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+
+    _gather(fetch, end=T0 + timedelta(days=5), limit=limit)
+
+    assert seen == peak
+
+
+def test_gather_chunked_a_limit_above_the_window_count_runs_all_at_once() -> None:
+    in_flight = 0
+    seen = 0
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        nonlocal in_flight, seen
+        in_flight += 1
+        seen = max(seen, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+
+    _gather(fetch, limit=100)
+
+    assert seen == 3
+
+
+def test_gather_chunked_raises_the_lowest_index_failure_not_the_first_in_time() -> None:
+    late = KeyError("w0")
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        if lo == T0:
+            try:
+                await asyncio.sleep(TIMEOUT)
+            except asyncio.CancelledError:
+                raise late from None
+        if lo == T0 + DAY:
+            raise ValueError("w1")
+
+    with pytest.raises(KeyError) as caught:
+        _gather(fetch)
+
+    assert caught.value is late
+    assert isinstance(caught.value.__cause__, ExceptionGroup)
+
+
+def test_gather_chunked_never_raises_an_exception_group() -> None:
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        raise ValueError("every window fails")
+
+    with pytest.raises(ValueError, match="every window fails") as caught:
+        _gather(fetch)
+
+    assert not isinstance(caught.value, ExceptionGroup)
+
+
+def test_gather_chunked_failure_cancels_the_windows_still_running() -> None:
+    cancelled: list[datetime] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        if lo == T0:
+            await asyncio.sleep(0.01)
+            raise ValueError("w0")
+        try:
+            await asyncio.sleep(TIMEOUT)
+        except asyncio.CancelledError:
+            cancelled.append(lo)
+            raise
+
+    with pytest.raises(ValueError, match="w0"):
+        _gather(fetch)
+
+    assert sorted(cancelled) == [T0 + DAY, T0 + 2 * DAY]
+
+
+def test_gather_chunked_failure_with_limit_one_never_starts_the_queued_windows() -> (
+    None
+):
+    calls: list[datetime] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        calls.append(lo)
+        raise KeyError("first")
+
+    with pytest.raises(KeyError):
+        _gather(fetch, end=T0 + timedelta(days=4), limit=1)
+
+    assert calls == [T0]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_gather_chunked_rejects_a_limit_below_one_before_any_call(limit: int) -> None:
+    calls: list[datetime] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        calls.append(lo)
+
+    with pytest.raises(ValueError, match="limit") as caught:
+        _gather(fetch, limit=limit)
+
+    assert str(limit) in str(caught.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "span", "match"),
+    [
+        (datetime(2026, 1, 1), T0 + DAY, DAY, "timezone"),  # noqa: DTZ001 - naive on purpose
+        (T0, T0, DAY, "start must be before end"),
+        (T0 + DAY, T0, DAY, "start must be before end"),
+        (T0, T0 + DAY, timedelta(0), "span"),
+        (T0, T0 + DAY, -DAY, "span"),
+    ],
+)
+def test_gather_chunked_validation_errors_come_before_any_call(
+    start: datetime, end: datetime, span: timedelta, match: str
+) -> None:
+    calls: list[datetime] = []
+
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        calls.append(lo)
+
+    with pytest.raises(ValueError, match=match):
+        _gather(fetch, start, end, span)
+
+    assert calls == []
+
+
+def test_gather_chunked_works_across_a_dst_change() -> None:
+    start = datetime(2026, 10, 24, tzinfo=CPH)
+    end = datetime(2026, 10, 28, tzinfo=CPH)
+
+    async def fetch(lo: datetime, hi: datetime) -> timedelta:
+        return hi.astimezone(UTC) - lo.astimezone(UTC)
+
+    results = _gather(fetch, start, end, DAY)
+
+    assert sum(cast(list[timedelta], results), timedelta(0)) == (
+        end.astimezone(UTC) - start.astimezone(UTC)
+    )
+
+
+def test_gather_chunked_leaves_no_task_running_after_a_failure() -> None:
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        if lo == T0:
+            raise ValueError("boom")
+        await asyncio.sleep(TIMEOUT)
+
+    async def go() -> int:
+        with contextlib.suppress(ValueError):
+            await gather_chunked(fetch, T0, T0 + timedelta(days=3), DAY)
+        return len(asyncio.all_tasks()) - 1  # everything but this task
+
+    assert asyncio.run(asyncio.wait_for(go(), TIMEOUT)) == 0
+
+
+def test_gather_chunked_propagates_an_outer_cancellation() -> None:
+    async def fetch(lo: datetime, hi: datetime) -> None:  # noqa: ARG001
+        await asyncio.sleep(TIMEOUT)
+
+    async def go() -> None:
+        task = asyncio.ensure_future(gather_chunked(fetch, T0, T0 + 2 * DAY, DAY))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(asyncio.wait_for(go(), TIMEOUT))
