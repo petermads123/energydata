@@ -27,7 +27,7 @@ runnable as `python -m energydata.utils.<module>`.
 | `retry_after_seconds(response: httpx.Response, now: datetime \| None = None) -> float \| None` | Parse `Retry-After` (seconds or HTTP date); naive `now` is a `ValueError`. |
 | `backoff_delay(retry: int, policy: RetryPolicy, rng: random.Random \| None = None) -> float` | Equal-jitter exponential delay in `[cap/2, cap]`. |
 | `request_with_retry(method, url, *, client=None, policy=None, params=None, headers=None, content=None, json=None, timeout=None, sleep=time.sleep) -> httpx.Response` | Sync wrapper. |
-| `async_request_with_retry(...same..., sleep=asyncio.sleep) -> httpx.Response` | Async wrapper; both share one private decision function. |
+| `async_request_with_retry(method, url, *, client: httpx.AsyncClient \| None = None, policy=None, params=None, headers=None, content=None, json=None, timeout=None, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> httpx.Response` | Async wrapper; same behaviour as `request_with_retry`, both share one private decision function; the waits are awaited, so the event loop keeps running. |
 | `main() -> None` | Showcase. |
 
 ## `src/energydata/utils/readers.py`
@@ -58,5 +58,23 @@ runnable as `python -m energydata.utils.<module>`.
 
 ## Tests
 
-`tests/test_retry.py`, `tests/test_readers.py` and `tests/test_chunking.py`: one suite per
-module, written at step 5. No test touches the network.
+One suite per module, written at step 5. No test touches the network.
+
+- `tests/test_retry.py` — every public name, driven through `httpx.MockTransport`
+  with an injected `sleep`. An autouse fixture patches the real httpx transports to
+  raise, so a test that reaches the network fails, and one test checks the guard
+  itself. Also covers: backoff bounds and overflow, `Retry-After` in seconds and in
+  all three HTTP-date forms, the holdoff cap and the holdoff reader, exhaustion
+  versus holdoff errors, closing a created client on every exit (cancellation
+  included), leaving a passed client open, sync/async parity, the async wrapper not
+  blocking the event loop, and that `main()` runs.
+- `tests/test_readers.py` — each reader's happy path, malformed input and
+  `ParseError` naming; CSV delimiter sniffing, BOM and encoding handling; ZIP
+  recursion, member naming and damaged archives; mapping by content type and by
+  filename; `read_bytes` dispatch; `read_response` charset handling. Also asserts
+  that `httpx` is the only runtime dependency in `pyproject.toml`.
+- `tests/test_chunking.py` — `date_windows` coverage and contiguity, both DST
+  changes, mixed zones, the repeated hour, and every validation error;
+  `fetch_chunked` and `async_fetch_chunked` run through the same parametrised
+  cases (order, stopping at the first exception, no call when validation fails),
+  plus a check that async windows never overlap.

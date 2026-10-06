@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | in progress |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -398,9 +398,22 @@ Edge cases considered and deliberately skipped, with reasons:
 
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | `partially` | Statuses and `RETRY_STATUSES`, timeouts (`TimeoutException`) and `NetworkError` (connect, read, write, close) are retried, other statuses raised on the first attempt: `retry.py` `RETRY_*`, `request_with_retry`; tests `test_each_retried_status_is_retried_then_the_success_is_returned`, `test_each_retried_exception_is_retried_then_the_success_is_returned`, `test_other_error_statuses_raise_after_one_request`. Whether `httpx.ProxyError` (a `TransportError` outside `NetworkError`, "an error occurred while establishing a proxy connection") is a "connection error" is not decided by A1 — see Halted. |
+| A2 | yes | `backoff_delay` (`retry.py`): cap `min(max_delay, base*2**(n-1))`, value in `[cap/2, cap]`; `RetryPolicy` fields configurable; `test_backoff_delay_*`, `test_the_wrappers_sleep_the_backoff_delays`. |
+| A3 | yes | `retry_after_seconds` (seconds, HTTP date), `holdoff_reader` wins, a holdoff is slept uncapped by `max_delay`, over `max_holdoff` raises `HoldoffTooLongError` naming wait and cap: `test_the_retry_after_header_replaces_the_computed_delay`, `test_a_holdoff_over_the_cap_raises_without_sleeping_or_retrying`, `test_a_holdoff_equal_to_the_cap_is_slept`; showcase prints `slept: [1.0]`. |
+| A4 | yes | `RetriesExhaustedError(attempts, response, exception)`, one specific type with attempts and last response/exception: `test_exhausted_by_status_sets_the_response_and_not_the_exception`, `test_exhausted_by_a_transport_error_sets_and_chains_the_exception`. |
+| A5 | yes | Both wrappers loop over the one `_retry_delay`; `test_sync_and_async_wrappers_behave_identically`, `test_the_async_wrapper_does_not_block_the_event_loop_while_waiting` (real `asyncio.sleep`). |
+| A6 | yes | `readers.py`; `test_read_*`, `test_format_from_*`, `test_read_response_*` (152 tests); `ParseError` message begins with the format name; showcase output run. |
+| A7 | yes | `date_windows`; `test_date_windows_*` incl. DST, exact multiple, invalid input; showcase output shows contiguous windows. |
+| A8 | yes | `fetch_chunked`, `async_fetch_chunked` sequential; `test_fetch_chunked_*`, `test_async_fetch_chunked_never_overlaps_windows`. |
+| A9 | yes | autouse `_no_network` guard plus `test_the_no_network_guard_refuses_a_real_transport`; `test_httpx_is_the_only_runtime_dependency`; full suite run here: 803 passed, `ruff check` and `mypy` clean. |
 
 Drift found, and what was done about it:
+
+- Out of scope, surface, connections: nothing from the exclusion list was built (no auth, URLs, DataFrames, throttling, caching, size limits; async chunking is sequential). No caller uses the package yet, as the concept says. No public API beyond the three parts.
+- Showcases: all three run, exit 0, read as inputs/call/output examples.
+- Structure: the structure-auditor's two wording fixes applied to `.claude/rules/structure-utils.md` (async wrapper's real signature; the Tests section naming what each suite checks). `STRUCTURE.md` needed none.
+- **`httpx.ProxyError` against A1: unresolved, halted.** A1 lists "connection errors". A `ProxyError` is raised while establishing the connection to a proxy, which reads as a connection error, yet it is also what a misconfigured proxy or a 407 produces, which a retry cannot cure; the concept names neither. `RETRY_EXCEPTIONS` (section 2) excludes it and step 5 pinned that. Deciding either way changes what is retried, which is section 1's call.
 
 ### Earlier rounds still hold
 
@@ -460,3 +473,12 @@ taken back through steps 1 to 7 on the same branch.
 > step that halted, the question for the user — and, once answered, the answer and what
 > changed because of it. Never deleted; it is the record of where the plan was thinner
 > than the code needed.
+
+### Step 6, concept check: is `httpx.ProxyError` a "connection error" under A1?
+
+Reason, as found: A1 says the wrapper "retries connection errors, timeouts, HTTP 429 ...". The built `RETRY_EXCEPTIONS` is `TimeoutException`, `NetworkError`, `RemoteProtocolError`; `httpx.ProxyError` is a `TransportError` that is none of these, so it propagates on the first attempt. Every other criterion is met.
+
+Question for the user: should a `ProxyError` be retried?
+- **Yes**: the failure to open a connection to the proxy is a connection error, and proxies do drop connections transiently. Cost: a permanently wrong proxy setting or proxy credentials is retried up to `max_attempts` times with backoff before failing.
+- **No** (as built): A1 stands as is; a proxy error is treated as configuration and fails at once. A1 could then say "network errors" or name the exception classes.
+Either answer is a one-line change to A1's wording or to `RETRY_EXCEPTIONS` plus a test; nothing else needs rework. `/build` resumes from step 6 once answered.
