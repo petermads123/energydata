@@ -34,6 +34,74 @@ prices = get_day_ahead_prices("2026-01-15", bidding_zones=["DK1", "DK2"])
 | Function | Currency and unit | Resolution | Format | Zones | Source datasets |
 |---|---|---|---|---|---|
 | `get_day_ahead_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh, excl. VAT | 15 minutes | wide: one float column per zone | `DK1`, `DK2` | *Elspotprices* (hourly, before 2025-10-01 00:00 Danish time, repeated over its four quarter-hours) and *DayAheadPrices* (15 minutes, from that instant; a missing value is NaN, never filled from hourly data) |
+| `get_imbalance_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns; one price, repeated in both | `DK1`, `DK2` | *ImbalancePrice* (`ImbalancePriceEUR`), from 2025-03-04 |
+| `get_afrr_energy_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns | `DK1`, `DK2` | *ImbalancePrice* (`aFRRVWAUpEUR`, `aFRRVWADownEUR`), from 2025-03-04 |
+| `get_mfrr_energy_prices(start, end=None, bidding_zones=("DK1", "DK2"))` | EUR/MWh | 15 minutes | wide: `(zone, up/down)` columns | `DK1`, `DK2` | *MfrrEnergyActivationMarket* (`mFRRSAUpEUR`, `mFRRSADownEUR`), from 2025-03-04 |
+| `get_mfrr_capacity_prices(start, end=None, bidding_zones=("DK1", "DK2"), *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `(zone, up/down)` columns, plus volume columns | `DK1`, `DK2` | *MfrrCapacityMarket*, from 2023-06-21 |
+| `get_afrr_capacity_prices(start, end=None, bidding_zones=("DK1", "DK2"), *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `(zone, up/down)` columns, plus volume columns | `DK1`, `DK2` (Nordic rows never returned) | *AfrrReservesNordic*, from 2022-12-08 |
+| `get_fcr_n_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-N`, auction `Total`), from 2021-11-10 |
+| `get_fcr_d_up_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-D upp`, auction `Total`), from 2021-11-10 |
+| `get_fcr_d_down_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FcrNdDK2* (`FCR-D ned`, auction `Total`), from 2021-11-10 |
+| `get_fcr_dk1_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 4-hour blocks (00, 04, ..., 20 Danish time) | wide: `cross_border` and `danish` columns, plus volume columns | `DK1` | *FcrDK1*, from 2021-01-19 |
+| `get_ffr_prices(start, end=None, *, include_volumes=False)` | EUR/MW/h (volumes MW) | 1 hour | wide: `price` column, plus volume columns | `DK2` | *FfrDK2*, from 2021-04-26 |
+
+### Tariffs, subscriptions and elafgift
+
+All from *DatahubPricelist* (fields `GLN_Number`, `ChargeType`, `ChargeTypeCode`, `ValidFrom`, `ValidTo`, `ResolutionDuration`, `Price1`-`Price24`), in DKK excl. VAT, from 2014. The hourly functions return a long frame with `start` and `end` columns (tz-aware `Europe/Copenhagen`, one half-open row per hour, 23 or 25 on a DST day) and the value column(s); an hour with no valid row is NaN. The subscription functions return one row per validity period with `start` and `end` clipped to the request. Each function takes an optional `client` (left open if passed).
+
+```python
+from energydata.energidataservice import get_dso_tariffs
+
+tariffs = get_dso_tariffs("radius", "2026-10-15")
+```
+
+| Function | Currency and unit | Resolution | Format | Source rows |
+|---|---|---|---|---|
+| `get_dso_tariffs(dso, start, end=None)` | DKK/kWh | 1 hour | long: `start`, `end`, `tariff` | `ChargeType` `D03`, the DSO's GLN and standard C consumption tariff code(s) (table below) |
+| `get_energinet_tariffs(start, end=None)` | DKK/kWh | 1 hour | long: `start`, `end`, `system_tariff`, `transmission_tariff` | `D03`, GLN `5790000432752`, codes `41000` and `40000` |
+| `get_dso_subscriptions(dso, start, end=None)` | DKK/month | one row per validity period | long: `start`, `end`, `subscription` | `D01`, the DSO's GLN and standard C consumption subscription code(s) (table below) |
+| `get_energinet_subscriptions(start, end=None)` | DKK/month | one row per validity period | long: `start`, `end`, `subscription` | `D01`, GLN `5790000432752`, code `41004` |
+| `get_electricity_tax(start, end=None)` | DKK/kWh | 1 hour | long: `start`, `end`, `electricity_tax` | `D03`, GLN `5790000432752`, code `EA-001` (normal rate; the reduced electric-heating rate is not published in this dataset) |
+
+`dso` is one of the names below, matched case-insensitively; an unknown name raises `ValueError` listing them. The same table is `energydata.energidataservice.DSOS`. Codes appear in order of precedence: where rows overlap the latest `ValidFrom` wins, then the earlier code. `sunds` publishes no C subscription, so its subscription is NaN.
+
+| Name | DSO | GLN | C tariff code(s) | C subscription code(s) |
+|---|---|---|---|---|
+| `aal` | Aal El-Net A M B A | 5790001095451 | `AAL-NT-05` | `AAL-E-50` |
+| `cerius` | Cerius A/S | 5790000705184 | `30TR_C_ET` | `30AB_CT` |
+| `dinel` | Dinel A/S | 5790000610099 | `TCL<100_02` | `ACL<100_01` |
+| `elektrus` | Elektrus A/S | 5790000836239 | `6000091` | `6000082` |
+| `elinord` | Elinord A/S | 5790001095277 | `43300` | `41300` |
+| `elnet-midt` | Elnet Midt A/S | 5790001100520 | `T3001` | `20001` |
+| `elvaerk` | Netselskabet Elværk A/S | 5790000681358 | `5NCFF` | `5ACFF` |
+| `flow` | FLOW Elnet A/S | 5790000392551 | `FE1 NT-01` | `FE1 E-50` |
+| `forsyning-elnet` | Forsyning Elnet A/S | 5790001088309 | `STR-NT-03` | `STR-E-50` |
+| `grindsted` | Grindsted Elnet A/S | 5790000681105 | `GEV-NT-01` | `GEV-E-50` |
+| `hammel` | Hammel Elforsyning Net A/S | 5790001090166 | `C-Tarif` | `55000` |
+| `hjerting` | Hjerting Transformatorforening | 5790001095376 | `C-Tarif` | `HE-E-50` |
+| `hurup` | Hurup Elværk Net A/S | 5790000610839 | `HEV-NT-01T` | `HEV-E-50` |
+| `ikast` | Ikast El Net A/S | 5790000682102 | `IEV-NT-01` | `IEV-E-50` |
+| `kimbrer` | Kimbrer Elnet A/S | 5790001095239 | `C-Tarif` | `AARS-E-50` |
+| `konstant-151` | Konstant Net A/S - 151 | 5790000704842 | `151-NT01T`, `C_FBTNTR_B` | `151-E5004`, `C_FBAHM__B` |
+| `konstant-245` | Konstant Net A/S - 245 | 5790000683345 | `245-NT01T`, `C_FBTNTR_B` | `245-E5004`, `C_FBAHM__B` |
+| `l-net` | L-Net A/S | 5790001090111 | `3000` | `4100` |
+| `laesoe` | Læsø Elnet A/S | 5790001103460 | `43100` | `41100` |
+| `midtfyns` | Midtfyns Elforsyning A.m.b.A | 5790001089023 | `TNT15000` | `AB15000` |
+| `n1-016` | N1 A/S - 016 | 5790002502699 | `C-Tarif` | `K_22000` |
+| `n1-131` | N1 A/S - 131 | 5790001089030 | `CD` | `CD` |
+| `n1-344` | N1 A/S - 344 | 5790000611003 | `T-C-F-F-TD` | `A-C-F-04` |
+| `noe` | NOE Net A/S | 5790000395620 | `30030` | `32310` |
+| `nord-energi` | Nord Energi Net A/S | 5790000610877 | `TAC` | `ABC` |
+| `radius` | Radius Elnet A/S | 5790000705689 | `DT_C_01` | `DA_C_F_01` |
+| `rah` | RAH Net A/S | 5790000681327 | `RAH-C` | `ABON-COPG` |
+| `ravdex` | Ravdex A/S | 5790000836727 | `NT-C` | `E-50C1` |
+| `sunds` | Sunds Net A.m.b.a | 5790001095444 | `SEF-NT-05` | none |
+| `tarm` | Tarm Elværk Net A/S | 5790000706419 | `TEV-NT-01T` | `TEV-E-50` |
+| `trefor` | TREFOR El-net A/S | 5790000392261 | `C` | `E-51` |
+| `trefor-oest` | TREFOR El-net Øst A/S | 5790000706686 | `46` | `E-50` |
+| `veksel` | Veksel A/S | 5790001088217 | `NT-01` | `E-50` |
+| `vores-elnet` | Vores Elnet A/S | 5790000610976 | `TNT1009` | `AB1012` |
+| `zeanet` | Zeanet A/S | 5790001089375 | `43110` | `41100` |
 
 The functions are plain synchronous calls, also from Jupyter. Several requests for one call
 run concurrently, up to a configurable cap.

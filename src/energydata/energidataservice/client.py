@@ -55,10 +55,7 @@ class EnergiDataServiceClient(ApiClient):
             ValueError: If `max_span` is not a positive whole number of minutes
                 or `max_concurrency` is below 1.
         """
-        if max_span <= timedelta(0) or max_span % timedelta(minutes=1):
-            raise ValueError(
-                f"max_span must be a positive whole number of minutes, got {max_span!r}"
-            )
+        _check_span(max_span)
         super().__init__(
             BASE_URL,
             policy=policy,
@@ -77,6 +74,7 @@ class EnergiDataServiceClient(ApiClient):
         filters: Mapping[str, Sequence[str]] | None = None,
         columns: Sequence[str] | None = None,
         sort_by: str | None = None,
+        max_span: timedelta | None = None,
     ) -> list[Record]:
         """Fetch every record of a dataset over `[start, end)`.
 
@@ -91,19 +89,24 @@ class EnergiDataServiceClient(ApiClient):
                 parameter.
             columns: The fields to return. `None` returns all of them.
             sort_by: A field to sort each window's records by, ascending.
+            max_span: The window size for this call, overriding the client's.
+                `None` uses the client's.
 
         Returns:
             The records of every window, concatenated in window order.
 
         Raises:
             ValueError: If `start` or `end` is naive, has seconds, or
-                `start >= end`.
+                `start >= end`, or `max_span` is not a positive whole number
+                of minutes.
             RuntimeError: If awaited outside the client's own loop.
             EnergiDataServiceError: If a payload is not a JSON object, has no
                 `records` list, has a record that is not a JSON object, or has
                 fewer records than its `total`.
             httpx.HTTPStatusError: For a non-retryable error status.
         """
+        span = self._max_span if max_span is None else max_span
+        _check_span(span)
         for name, bound in (("start", start), ("end", end)):
             if bound.second or bound.microsecond:
                 raise ValueError(
@@ -123,7 +126,7 @@ class EnergiDataServiceClient(ApiClient):
         async def fetch_window(lo: datetime, hi: datetime) -> list[Record]:
             return await self._fetch_window(dataset, lo, hi, values, fields, sort_by)
 
-        windows = await gather_chunked(fetch_window, start, end, self._max_span)
+        windows = await gather_chunked(fetch_window, start, end, span)
         return [record for window in windows for record in window]
 
     def get_dataset(
@@ -135,6 +138,7 @@ class EnergiDataServiceClient(ApiClient):
         filters: Mapping[str, Sequence[str]] | None = None,
         columns: Sequence[str] | None = None,
         sort_by: str | None = None,
+        max_span: timedelta | None = None,
     ) -> list[Record]:
         """Fetch every record of a dataset over `[start, end)`, synchronously.
 
@@ -146,13 +150,16 @@ class EnergiDataServiceClient(ApiClient):
                 parameter.
             columns: The fields to return. `None` returns all of them.
             sort_by: A field to sort each window's records by, ascending.
+            max_span: The window size for this call, overriding the client's.
+                `None` uses the client's.
 
         Returns:
             The records of every window, concatenated in window order.
 
         Raises:
             ValueError: If `start` or `end` is naive, has seconds, or
-                `start >= end`.
+                `start >= end`, or `max_span` is not a positive whole number
+                of minutes.
             RuntimeError: If the client is closed.
             EnergiDataServiceError: If a payload is not a JSON object, has no
                 `records` list, has a record that is not a JSON object, or has
@@ -167,6 +174,7 @@ class EnergiDataServiceClient(ApiClient):
                 filters=filters,
                 columns=columns,
                 sort_by=sort_by,
+                max_span=max_span,
             )
         )
 
@@ -197,6 +205,14 @@ class EnergiDataServiceClient(ApiClient):
             "GET", f"/dataset/{dataset}", params=params, fmt="json"
         )
         return _records(payload, dataset)
+
+
+def _check_span(span: timedelta) -> None:
+    """Raise unless `span` is a positive whole number of minutes."""
+    if span <= timedelta(0) or span % timedelta(minutes=1):
+        raise ValueError(
+            f"max_span must be a positive whole number of minutes, got {span!r}"
+        )
 
 
 def _records(payload: object, dataset: str) -> list[Record]:

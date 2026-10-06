@@ -30,16 +30,26 @@ by heading is updated in the same change.
 
 ## `feat/energidataservice-client` round 1 (2026-10-06)
 
-- **Live API constants unconfirmed.** The dataset and field names (`DayAheadPrices`:
-  `TimeUTC`/`DayAheadPriceEUR`; `Elspotprices`: `HourUTC`/`SpotPriceEUR`), `end` being
-  exclusive and `sort=… asc` being honoured come from the API docs; the build container could
-  not reach the API. Confirm with `python -m energydata.energidataservice.day_ahead`; a
-  mismatch fails loudly (HTTP 400 or a duplicate-record `ValueError`), not silently.
 - **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
   private helper from `utils/chunking.py` for the lowest-index re-raise rule; make it public
   (with a `structure-utils.md` row) when a second caller needs it.
-- **Remaining Energi Data Service endpoints are next.** User decision at step 9: ship this
-  branch first, then on a new branch from `main` build the market endpoints as one round
-  (imbalance, mFRR capacity/energy, aFRR capacity/energy, FCR-N, FCR-D up/down, FCR DK1,
-  FFR) and tariffs, subscriptions and elafgift (*DatahubPricelist*, DSO mapping) as the
-  next. Spec: `ideas/energydata/energidataservice-datasets.md`.
+
+## `feat/energidataservice-markets` round 1 (2026-10-06)
+
+- **Hourly capacity functions drop off-grid rows.** mFRR/aFRR capacity, FCR-N/D and FFR are
+  hourly; a `:15`/`:30`/`:45` record is silently dropped (pinned by a test). If Energinet
+  moves a capacity dataset to a 15-minute MTU, the function would return a quarter of the
+  data without error — revisit the resolution then.
+- **FCR DK1 on an autumn DST day is unverified live.** Synthetic records prove the
+  00/04/…/20 block grid; the live check of 2025-10-26 hit the rate limit.
+- **README and docstring wording has no test.** Plan intent T8 was skipped at step 5; step 6
+  read all ten docstrings and README rows instead. A test like `test_day_ahead`'s
+  docstring/README check would pin them.
+
+## `feat/energidataservice-tariffs` round 1 (2026-10-06)
+
+- **Pre-2025 DSO codes are unmapped.** `DSOS` was built from 2025-2027 price-list rows. A DSO
+  that used a different tariff or subscription code before 2025 returns NaN for those years
+  (Radius `DT_C_01` reaches back to 2017 and is unaffected). Likewise a DSO that changes a
+  code in future goes NaN visibly until `dsos.py` is updated; refreshing the fixture's
+  catalogue and the completeness test catches it.

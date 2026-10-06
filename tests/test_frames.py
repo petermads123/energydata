@@ -8,6 +8,8 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from energydata.utils import (
+    block_index,
+    combine_levels,
     conform,
     expand_to_resolution,
     period_index,
@@ -509,3 +511,295 @@ def test_conform_naive_frame_index_against_aware_index_is_refused_or_all_nan() -
         return
 
     assert result["DK1"].isna().all()  # never a silent wrong match
+
+
+# --- block_index --------------------------------------------------------------
+
+
+def _next_midnight(day: str) -> pd.Timestamp:
+    """Local midnight after `day`, whatever the day's length."""
+    return pd.Timestamp(
+        (pd.Timestamp(day) + pd.Timedelta(days=1)).date().isoformat(), tz=CPH
+    )
+
+
+def _hours(index: pd.DatetimeIndex) -> list[int]:
+    return [stamp.hour for stamp in index]
+
+
+@pytest.mark.parametrize(
+    ("day", "elapsed"),
+    [("2026-03-29", 3), ("2026-09-15", 4), ("2026-10-25", 5)],
+)
+def test_block_index_gives_six_wall_clock_blocks_on_every_kind_of_day(
+    day: str, elapsed: int
+) -> None:
+    index = block_index(_ts(day), _next_midnight(day), 4)
+
+    assert _hours(index) == [0, 4, 8, 12, 16, 20]
+    assert index[1] - index[0] == pd.Timedelta(hours=elapsed)
+
+
+def test_block_index_is_half_open_named_time_and_in_nanoseconds() -> None:
+    index = block_index(_ts("2026-09-15"), _ts("2026-09-15T08:00"), 4)
+
+    assert list(index) == [_ts("2026-09-15"), _ts("2026-09-15T04:00")]
+    assert index.name == "time"
+    assert str(index.dtype) == NS_CPH
+
+
+def test_block_index_returns_nanoseconds_for_a_coarse_unit_input() -> None:
+    start = _ts("2026-09-15").as_unit("s")
+    end = _ts("2026-09-16").as_unit("s")
+
+    index = block_index(start, end, 4)
+
+    assert str(index.dtype) == NS_CPH
+    assert index.name == "time"
+
+
+def test_block_index_spans_several_days() -> None:
+    index = block_index(_ts("2026-03-28"), _ts("2026-03-31"), 4)
+
+    assert len(index) == 18
+
+
+def test_block_index_converts_end_to_the_start_zone_before_checking_it() -> None:
+    index = block_index(_ts("2026-09-15"), _ts("2026-09-15T22:00", "UTC"), 4)
+
+    assert _hours(index) == [0, 4, 8, 12, 16, 20]
+    assert str(index.tz) == CPH
+    with pytest.raises(ValueError, match="end must be the start of a 4-hour block"):
+        block_index(_ts("2026-09-15"), _ts("2026-09-16", "UTC"), 4)
+
+
+@pytest.mark.parametrize(
+    ("day", "hours", "count"),
+    [
+        ("2026-03-29", 1, 23),
+        ("2026-10-25", 1, 24),
+        ("2026-03-29", 2, 11),
+        ("2026-10-25", 2, 12),
+        ("2026-03-29", 4, 6),
+        ("2026-10-25", 4, 6),
+        ("2026-09-15", 24, 1),
+    ],
+)
+def test_block_index_counts_blocks_across_dst_days(
+    day: str, hours: int, count: int
+) -> None:
+    index = block_index(_ts(day), _next_midnight(day), hours)
+
+    assert len(index) == count
+
+
+def test_block_index_keeps_the_repeated_autumn_hour_once_at_the_earlier_stamp() -> None:
+    index = block_index(_ts("2026-10-25"), _ts("2026-10-26"), 1)
+
+    twos = [stamp for stamp in index if stamp.hour == 2]
+    assert [stamp.utcoffset() for stamp in twos] == [timedelta(hours=2)]
+
+
+def test_block_index_skips_a_start_inside_the_spring_gap() -> None:
+    index = block_index(_ts("2026-03-29"), _ts("2026-03-30"), 2)
+
+    assert 2 not in _hours(index)
+    assert _hours(index)[:2] == [0, 4]
+
+
+@pytest.mark.parametrize("offset", ["+01:00", "+02:00"])
+def test_block_index_start_on_either_repeated_hour_survives(offset: str) -> None:
+    start = pd.Timestamp(f"2026-10-25T02:00{offset}").tz_convert(CPH)
+
+    index = block_index(start, _ts("2026-10-25T04:00"), 2)
+
+    assert list(index) == [start]
+
+
+@pytest.mark.parametrize("which", ["start", "end"])
+@pytest.mark.parametrize("fraction", [".000001", ".5", ".000000001"])
+def test_block_index_rejects_a_bound_with_a_sub_second_part(
+    which: str, fraction: str
+) -> None:
+    bounds = {"start": _ts("2026-09-15"), "end": _ts("2026-09-16")}
+    bounds[which] = pd.Timestamp(
+        bounds[which].tz_localize(None).isoformat() + fraction, tz=CPH
+    )
+
+    with pytest.raises(ValueError, match=f"{which} must be the start of a 4-hour"):
+        block_index(bounds["start"], bounds["end"], 4)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "message"),
+    [
+        (pd.Timestamp("2026-09-15"), _ts("2026-09-16"), "start must be timezone-aware"),
+        (_ts("2026-09-15"), pd.Timestamp("2026-09-16"), "end must be timezone-aware"),
+        (_ts("2026-09-15"), _ts("2026-09-15"), "start must be before end"),
+        (_ts("2026-09-16"), _ts("2026-09-15"), "start must be before end"),
+        (_ts("2026-09-15T01:00"), _ts("2026-09-16"), "start must be the start of a"),
+        (_ts("2026-09-15"), _ts("2026-09-15T06:00"), "end must be the start of a"),
+        (_ts("2026-09-15T04:30"), _ts("2026-09-16"), "start must be the start of a"),
+    ],
+)
+def test_block_index_rejects_bad_bounds(
+    start: pd.Timestamp, end: pd.Timestamp, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        block_index(start, end, 4)
+
+
+@pytest.mark.parametrize("hours", [0, -4, 5, 7, 25, 48])
+def test_block_index_rejects_hours_that_do_not_divide_a_day(hours: int) -> None:
+    with pytest.raises(ValueError, match=f"got {hours}"):
+        block_index(_ts("2026-09-15"), _ts("2026-09-16"), hours)
+
+
+def test_block_index_is_idempotent_and_leaves_its_bounds_alone() -> None:
+    start, end = _ts("2026-09-15"), _ts("2026-09-16")
+
+    first = block_index(start, end, 4)
+    second = block_index(start, end, 4)
+
+    assert first.equals(second)
+    assert (start, end) == (_ts("2026-09-15"), _ts("2026-09-16"))
+
+
+# --- combine_levels -----------------------------------------------------------
+
+
+def _grid(hours: int = 3) -> pd.DatetimeIndex:
+    return period_index(
+        _ts("2026-09-15"), _ts("2026-09-15") + pd.Timedelta(hours=hours), H
+    )
+
+
+def _zones(values: dict[str, float | None], hours: int = 3) -> pd.DataFrame:
+    """A wide frame over `_grid(hours)` with a constant column per zone."""
+    index = _grid(hours)
+    return pd.DataFrame(
+        {zone: [value] * len(index) for zone, value in values.items()},
+        index=index,
+        dtype="float64",
+    )
+
+
+def test_combine_levels_orders_outer_first_then_parts() -> None:
+    part = _zones({"DK1": 1.0, "DK2": 2.0})
+
+    result = combine_levels({"up": part, "down": part}, _grid(), ["DK1", "DK2"])
+
+    assert result.columns.tolist() == [
+        ("DK1", "up"),
+        ("DK1", "down"),
+        ("DK2", "up"),
+        ("DK2", "down"),
+    ]
+
+
+def test_combine_levels_keeps_given_order_and_never_sorts() -> None:
+    part = _zones({"DK1": 1.0, "DK2": 2.0})
+
+    result = combine_levels({"up": part, "down": part}, _grid(), ["DK2", "DK1"])
+
+    assert result.columns.tolist() == [
+        ("DK2", "up"),
+        ("DK2", "down"),
+        ("DK1", "up"),
+        ("DK1", "down"),
+    ]
+    assert result.columns.tolist()[0] == ("DK2", "up")
+    result = combine_levels({"z": part, "a": part}, _grid(), ["DK1"])
+    assert result.columns.tolist() == [("DK1", "z"), ("DK1", "a")]
+
+
+def test_combine_levels_pads_a_missing_zone_and_missing_slots_with_nan() -> None:
+    up = _zones({"DK1": 1.0, "DK2": 2.0})
+    down = _zones({"DK1": 5.0}, hours=2)
+
+    result = combine_levels({"up": up, "down": down}, _grid(), ["DK1", "DK2"])
+
+    assert result[("DK2", "down")].isna().all()
+    assert result[("DK1", "down")].tolist()[:2] == [5.0, 5.0]
+    assert np.isnan(result[("DK1", "down")].iloc[2])
+    assert result[("DK2", "up")].tolist() == [2.0, 2.0, 2.0]
+
+
+def test_combine_levels_drops_columns_that_are_not_in_outer() -> None:
+    part = _zones({"DK1": 1.0, "FI": 3.0, "NO1": 4.0})
+
+    result = combine_levels({"up": part}, _grid(), ["DK1", "DK2"])
+
+    assert sorted(set(result.columns.get_level_values(0))) == ["DK1", "DK2"]
+    assert result[("DK2", "up")].isna().all()
+
+
+def test_combine_levels_casts_to_float64_and_matches_the_index_exactly() -> None:
+    wide = _zones({"DK1": 1.0}, hours=5)
+    ints = pd.DataFrame({"DK1": [1, 2, 3, 4, 5]}, index=wide.index)
+
+    result = combine_levels({"up": ints}, _grid(), ["DK1"])
+
+    assert result.index.equals(_grid())
+    assert set(result.dtypes) == {np.dtype("float64")}
+    assert result[("DK1", "up")].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_combine_levels_over_an_empty_index_keeps_the_columns() -> None:
+    empty = pd.DatetimeIndex([], tz=CPH)
+    part = pd.DataFrame({"DK1": [1, None]}, index=_grid(2))
+
+    result = combine_levels({"up": part, "down": part}, empty, ["DK1", "DK2"])
+
+    assert result.shape == (0, 4)
+
+
+def test_combine_levels_gives_the_same_frame_under_two_keys_the_same_values() -> None:
+    part = _zones({"DK1": 1.0, "DK2": 2.0})
+    before = part.copy()
+
+    result = combine_levels({"up": part, "down": part}, _grid(), ["DK1", "DK2"])
+
+    for zone in ("DK1", "DK2"):
+        assert_frame_equal(
+            result[[(zone, "up")]].droplevel(1, axis=1),
+            result[[(zone, "down")]].droplevel(1, axis=1),
+        )
+    assert_frame_equal(part, before)
+
+
+def test_combine_levels_does_not_mutate_a_part_with_foreign_columns() -> None:
+    part = pd.DataFrame({"DK1": [1, 2, 3], "FI": [4, 5, 6]}, index=_grid())
+
+    combine_levels({"up": part}, _grid(), ["DK1"])
+
+    assert list(part.columns) == ["DK1", "FI"]
+    assert set(part.dtypes) == {np.dtype("int64")}
+
+
+@pytest.mark.parametrize(
+    ("parts", "outer", "message"),
+    [
+        ({}, ["DK1"], "parts must not be empty"),
+        ({"up": _zones({"DK1": 1.0})}, [], "outer must not be empty"),
+        ({"up": _zones({"DK1": 1.0})}, (), "outer must not be empty"),
+    ],
+)
+def test_combine_levels_rejects_empty_parts_or_outer(
+    parts: dict[str, pd.DataFrame], outer: list[str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        combine_levels(parts, _grid(), outer)
+
+
+def test_combine_levels_rejects_a_part_with_a_duplicate_index_entry() -> None:
+    index = pd.DatetimeIndex([_ts("2026-09-15"), _ts("2026-09-15")])
+    part = pd.DataFrame({"DK1": [1.0, 2.0]}, index=index)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        combine_levels({"up": part}, _grid(), ["DK1"])
+
+
+def test_combine_levels_rejects_a_repeated_outer_name_naming_it() -> None:
+    with pytest.raises(ValueError, match="DK1"):
+        combine_levels({"up": _zones({"DK1": 1.0})}, _grid(), ["DK1", "DK1"])

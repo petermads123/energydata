@@ -98,9 +98,11 @@ The only pandas-using module besides `periods.py`. Every frame it builds has a
 | Signature | Description |
 |---|---|
 | `period_index(start: pd.Timestamp, end: pd.Timestamp, resolution: timedelta) -> pd.DatetimeIndex` | Every slot of `[start, end)`, stepped in elapsed time. `ValueError` for a naive bound, `start >= end`, a bad resolution or a span that is not a whole multiple of it. |
+| `block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.DatetimeIndex` | Every block start in `[start, end)`: local wall-clock hours that are multiples of `hours` (a positive divisor of 24), minute 0. A DST change shortens or lengthens the block holding it but never moves a start; a repeated wall-clock start is kept once, the earlier, and one inside the spring gap is absent. `ValueError` for a naive bound, `start >= end`, a bad `hours` or a bound that is not a block start. |
 | `records_to_wide(records: Sequence[Mapping[str, object]], *, time: str, column: str, value: str, tz: str = DANISH_TZ) -> pd.DataFrame` | Pivot long records to a float frame (naive times are UTC, `None` is NaN, empty input gives an empty tz-aware frame). `ValueError` for a missing field, an unparseable value or a duplicate (`time`, `column`). |
 | `expand_to_resolution(frame: pd.DataFrame, source: timedelta, target: timedelta) -> pd.DataFrame` | Repeat each row over the finer slots it covers; gaps stay gaps. `ValueError` unless `source` is a positive whole multiple of `target`. |
 | `conform(frame: pd.DataFrame, index: pd.DatetimeIndex, columns: Sequence[str]) -> pd.DataFrame` | Reindex to exactly `index` x `columns` as float64, NaN where missing, never filled from a neighbour. `ValueError` for a duplicate index. |
+| `combine_levels(parts: Mapping[str, pd.DataFrame], index: pd.DatetimeIndex, outer: Sequence[str]) -> pd.DataFrame` | Conform each part to `index` and `outer`, then join with MultiIndex columns `(outer, part key)`, outer first then `parts` order; float64. `ValueError` for empty `parts` or `outer`, a repeated `outer` name, or a part with a duplicate index entry. |
 | `main() -> None` | Showcase. |
 
 ## Tests
@@ -136,8 +138,8 @@ One suite per module, written at step 5. No test touches the network.
   input converted, the repeated hour, every `ValueError` naming the value.
 - `tests/test_zones.py` — `normalize_bidding_zones`: order kept, string wrapped, unknown,
   empty and duplicate input refused naming the value, purity.
-- `tests/test_frames.py` — `period_index` across DST and its rejections; `records_to_wide`
+- `tests/test_frames.py` — `period_index` across DST and its rejections; `block_index` (DST days, repeated hour, rejections); `combine_levels` (order, padding, foreign columns dropped, float64, empty and repeated input, purity); `records_to_wide`
   time parsing, `None` values, empty input, duplicates, missing fields;
   `expand_to_resolution` gaps and the autumn DST hour; `conform` padding, order, never
   filling, duplicates, float64.
-- `tests/conftest.py` — the autouse no-network guard for the whole suite.
+- `tests/conftest.py` — the autouse no-network guard for the whole suite, plus the market-test support (see `structure-energidataservice.md`).
