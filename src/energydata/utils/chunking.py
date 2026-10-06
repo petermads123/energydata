@@ -106,7 +106,8 @@ async def async_fetch_chunked[T](
 
 def main() -> None:
     """Showcase this module's functionality."""
-    zone = ZoneInfo("Europe/Copenhagen")
+    zone_name = "Europe/Copenhagen"  # any IANA time-zone name
+    zone = ZoneInfo(zone_name)
     start = datetime(2024, 1, 1, tzinfo=zone)
     end = datetime(2026, 7, 1, tzinfo=zone)
     span = timedelta(days=365)
@@ -124,6 +125,7 @@ def main() -> None:
 
     windows = date_windows(start, end, span)
 
+    print(f"{len(windows)} windows across the DST change, {span} each:")
     for lo, hi in windows:
         print(f"  {lo.isoformat()} -> {hi.isoformat()}")
 

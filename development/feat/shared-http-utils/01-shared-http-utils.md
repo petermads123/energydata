@@ -1,6 +1,6 @@
 # Shared HTTP utilities
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -306,12 +306,19 @@ Built as planned, with these small departures (signatures in the Public API tabl
 
 | Check | Result |
 |---|---|
-| `ruff check .` | |
-| `ruff format --check .` | |
-| `mypy` | |
+| `ruff check .` | `All checks passed!` (exit 0) |
+| `ruff format --check .` | `44 files already formatted` (exit 0) |
+| `mypy` | `Success: no issues found in 15 source files` (exit 0) |
+| `pytest` | `311 passed` — the existing suite only; the three new test files are step 5's |
 | Plan completeness | every signature in the Public API table exists as written |
 | `STRUCTURE.md` | in sync |
-| `python -m <package>.<module>` | |
+| `python -m energydata.utils.<module>` | retry, readers, chunking each exit 0 with readable output |
+
+**Plan completeness.** Compared with `inspect.signature` and the source: all 3 retry constants, `HoldoffFn`, `RetryPolicy` (fields and defaults), the three error classes, `retry_after_seconds`, `backoff_delay`, `request_with_retry`, `async_request_with_retry`, the readers' `Format`, `FORMATS`, `JsonValue`, `Parsed`, `ParseError`, all eight functions, `date_windows`, `fetch_chunked`, `async_fetch_chunked` and the three `main` match the plan's names, parameter names, defaults, annotations and return types. Missing: none. Unplanned: none (the `RetryError` leading `message` and `ParseError.detail` are recorded in section 3). Deviations: only those in section 3, already recorded. `utils/__init__.py` re-exports exactly the public names, not `main`.
+
+**structure-auditor (before step 4).** Reported `STRUCTURE.md` and `.claude/rules/structure-utils.md` match the code; no edits needed. Its three optional completeness notes (zip directory skipping and nested recursion, `read_bytes` `ValueError`, CSV charset from `Content-Type`) are behaviour detail the tables already cover in purpose; none applied. The three absent test paths are deliberate until step 5.
+
+**Showcases.** Each shows the `RuntimeWarning` the rules call expected. One edit: `chunking.main` bound the zone name inline and printed its second case unlabelled; it now binds `zone_name` with a comment and prints a `windows across the DST change` heading. `retry.main` and `readers.main` were already in the required form.
 
 ---
 
