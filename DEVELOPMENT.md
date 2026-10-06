@@ -38,3 +38,8 @@ by heading is updated in the same change.
 - **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
   private helper from `utils/chunking.py` for the lowest-index re-raise rule; make it public
   (with a `structure-utils.md` row) when a second caller needs it.
+- **Remaining Energi Data Service endpoints are next.** User decision at step 9: ship this
+  branch first, then on a new branch from `main` build the market endpoints as one round
+  (imbalance, mFRR capacity/energy, aFRR capacity/energy, FCR-N, FCR-D up/down, FCR DK1,
+  FFR) and tariffs, subscriptions and elafgift (*DatahubPricelist*, DSO mapping) as the
+  next. Spec: `ideas/energydata/energidataservice-datasets.md`.
