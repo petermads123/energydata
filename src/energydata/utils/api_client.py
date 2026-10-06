@@ -63,7 +63,7 @@ class ApiClient:
         self._max_concurrency = max_concurrency
         self._headers = dict(headers) if headers is not None else None
         self._transport = transport
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -136,14 +136,15 @@ class ApiClient:
             RuntimeError: If the client is closed, or if called from the
                 client's own loop thread, which would deadlock.
         """
-        loop = self._ensure_started()
-        if self._thread is not None and threading.get_ident() == self._thread.ident:
-            raise RuntimeError("run() was called from the client's own loop thread")
 
         async def call() -> T:
             return await work()
 
-        future = asyncio.run_coroutine_threadsafe(call(), loop)
+        with self._lock:  # a concurrent close() cannot slip between start and submit
+            loop = self._ensure_started()
+            if self._thread is not None and threading.get_ident() == self._thread.ident:
+                raise RuntimeError("run() was called from the client's own loop thread")
+            future = asyncio.run_coroutine_threadsafe(call(), loop)
         try:
             return future.result()
         except BaseException:

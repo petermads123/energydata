@@ -79,6 +79,7 @@ def get_day_ahead_prices(
             parse, or a zone is unknown, repeated or missing.
         EnergiDataServiceError: If the service returns an unexpected payload.
         httpx.HTTPStatusError: If the service refuses a request.
+        RuntimeError: If a passed `client` is closed.
     """
     zones = normalize_bidding_zones(bidding_zones)
     first, last = resolve_period(start, end, resolution=_QUARTER)

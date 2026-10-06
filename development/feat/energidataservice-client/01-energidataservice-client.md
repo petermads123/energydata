@@ -1,6 +1,6 @@
 # Energi Data Service client and day-ahead prices
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -447,10 +447,61 @@ No deviation from the Public API table; every signature is as written. Smaller p
 
 ## 5. Test log
 
-| Intent | Test names | Result |
+Full suite: 1143 passed. New or extended files: `test_zones.py` (22), `test_periods.py` (77),
+`test_frames.py` (63), `test_chunking.py` (66, `gather_chunked` added), `test_api_client.py`
+(40), `test_energidataservice_client.py` (45), `test_day_ahead.py` (70), plus `conftest.py`
+and the edited `test_retry.py` / `test_readers.py`.
+
+| Intent | Test names (by prefix, per file) | Result |
 |---|---|---|
+| T1 | `tests/test_periods.py::test_resolve_period_*` (whole-day 92/96/100, lone timestamp, exclusive end, naive/aware/string, misaligned either bound, bad resolution, unknown tz, unparseable and empty string naming the value) | green |
+| T2 | `tests/test_zones.py::test_normalize_bidding_zones_*` | green |
+| T3 | `tests/test_frames.py::test_period_index_*`, `test_records_to_wide_*`, `test_expand_to_resolution_*`, `test_conform_*` | green |
+| T4 | `tests/test_chunking.py::test_gather_chunked_*` | green |
+| T5 | `tests/test_api_client.py::test_api_client_*`, including `..._run_racing_close_never_hangs` | green |
+| T6 | `tests/test_energidataservice_client.py::test_client_*` (exact params, windows in order, cap, payload checks, 400, bounds, construction, loops) | green |
+| T7 | `tests/test_day_ahead.py::test_day_ahead_*`: hourly-era fill and gap, null and missing 15-minute value NaN with hourly data present, period spanning the switch, per-side single-dataset requests (parametrized at the switch boundary), lone date and mid-hour timestamp, future period, zone subset and order, request contents, client ownership and cleanup, one failing dataset cancels the other | green |
+| T8 | `test_day_ahead_docstring_names_the_output_contract`, `test_readme_endpoint_row_names_the_output_contract`, `test_utils_modules_name_no_energi_data_service_specifics`, `test_httpx_and_pandas_are_the_only_runtime_dependencies`, `test_the_no_network_guard_refuses_a_real_transport` | green |
+
+Bugs the tests found and fixed (earlier run, commit 8eef58b, and this run):
+
+- `resolve_period` read `" 2025-10-01"`, `"1 Oct 2025"`, `"2025"` and `""` through `pd.Timestamp` as one slot or NaT; strings now go through `datetime.fromisoformat`, so they raise `ValueError` naming the string.
+- `resolve_period` with an unknown `tz` raised a `KeyError` subclass for aware input; now a `ValueError` for both.
+- `period_index` with bounds in different zones raised a non-`ValueError`; `end` is converted to `start`'s zone.
+- `records_to_wide` turned a `None` time into a NaT row and rejected mixed ISO precision; it now uses `format="ISO8601"` and raises on a missing time.
+- `fetch_dataset` split a bare string `filters` value or `columns` into characters, and truncated seconds (and sub-minute `max_span`) into duplicate windows; strings are wrapped, seconds and a non-whole-minute `max_span` raise `ValueError`.
+- `ApiClient` left a half-started loop when opening the HTTP client failed (an unencodable header); it now tears down and every later `run` fails the same way.
+- `gather_chunked` started queued windows after a failure; it no longer does.
+- `ApiClient.run` could race `close()` and hang (the lock was released between start and submit); `run` now submits under the lock (now an `RLock`).
+- User decision during step 5: `get_day_ahead_prices` uses the fixed switch, see section 3.
+
+Contradictions from the two test-designers, applied or rebutted:
+
+| Contradiction | Decision |
+|---|---|
+| Bare string in `filters` / `columns` split into characters (both) | Applied: fixed, tested. |
+| Seconds and sub-minute `max_span` truncated (both) | Applied: `ValueError`, tested. |
+| `period_index` mixed-zone bounds (both) | Applied: fixed, tested. |
+| `records_to_wide` `None`/`""` time gives NaT (both) | Applied: raises, tested. |
+| Mixed ISO precision (contract) | Applied: `format="ISO8601"`, tested. |
+| Non-ISO and reduced-precision strings read as a timestamp (both) | Applied: rejected, tested. |
+| `""` error says `NaT` (both) | Applied with the above, tested. |
+| Unknown `tz` raises different types (input-space) | Applied: `ValueError` for both, tested. |
+| Non-ASCII header leaves a half-started client (input-space) | Applied, tested. |
+| Misaligned aware input reported in the converted form (contract) | Rebutted: the converted instant is the value that is misaligned; tests assert on it. |
+| `Raises:` sections miss the retry and parse errors (contract) | Partly applied: `get_day_ahead_prices` now lists `RuntimeError`; the retry and parse errors stay under "the errors of `request`", as the plan words it. |
+| `run` / `close` race can hang (contract) | Applied: fixed, stress test added. |
+| Null 15-minute value filled from hourly (both) | Settled by the user decision: NaN, tested. |
+| `total` as a float is ignored (input-space) | Rebutted: the API sends integers; the test pins that only an `int` total is checked. |
+| `normalize_bidding_zones` accepts a `set` (input-space) | Rebutted: outside the declared type; the type hint is the contract. |
+| Alignment measured on the UTC epoch for zones with odd offsets (input-space) | Rebutted: Copenhagen and every whole-hour zone are unaffected; a calendar-aware resolution belongs to the round that needs one. |
 
 Edge cases considered and deliberately skipped, with reasons:
+
+- A live-API test: out of scope in section 1; the showcases are the live check.
+- Zones with non-whole-hour offsets and `set` zone input: see the rebuttals above.
+- Timing-based assertions on retry delays: the suite uses a zero-delay `RetryPolicy`, and the retry module has its own suite from the earlier round.
+- Requests spanning both a DST change and the switch: the two mechanisms (index stepping in elapsed time, a split at one instant) are each tested on their own across both DST days.
 
 ---
 

@@ -458,6 +458,29 @@ def test_api_client_close_cancels_work_running_in_another_thread() -> None:
     assert _loop_threads() == []
 
 
+def test_api_client_run_racing_close_never_hangs() -> None:
+    outcomes: set[str] = set()
+
+    def attempt(client: ApiClient) -> None:
+        try:
+            assert client.run(_get(client)) == {"path": "/p"}
+            outcomes.add("result")
+        except RuntimeError:
+            outcomes.add("closed")
+        except concurrent.futures.CancelledError:
+            outcomes.add("cancelled")
+
+    for _ in range(25):
+        client = ApiClient(BASE, transport=httpx.MockTransport(_ok), policy=FAST)
+        with concurrent.futures.ThreadPoolExecutor(4) as pool:
+            futures = [pool.submit(attempt, client) for _ in range(4)]
+            client.close()
+            for future in futures:
+                future.result(TIMEOUT)  # a hang fails here instead of the suite
+
+    assert outcomes <= {"result", "closed", "cancelled"}
+
+
 def test_api_client_an_interrupted_run_cancels_the_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
