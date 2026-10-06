@@ -30,7 +30,12 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 MARKETS_FIXTURE = Path(__file__).parent / "fixtures" / "energidataservice_markets.json"
+PRICELIST_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "energidataservice_pricelist.json"
+)
 _TIME_FORMAT = "%Y-%m-%dT%H:%M"
+# Datasets whose window field is a validity date, which the API compares by date.
+_DATE_FIELDS = {"DatahubPricelist": "ValidFrom"}
 
 type MarketRecords = dict[str, list[dict[str, Any]]]
 
@@ -39,7 +44,8 @@ class MarketsService:
     """A mock Energi Data Service for the market datasets.
 
     Serves stored records the way the API does: a `[start, end)` window on the
-    dataset's UTC time field, then the `filter` parameter on every field it
+    dataset's UTC time field (for `DatahubPricelist`, on the date of `ValidFrom`
+    against the date part of `start` and `end`, `end` exclusive), then the `filter` parameter on every field it
     names, then `sort` and the `columns` projection. A filter on a field the
     records lack, or a column they lack, is a 400, as at the real service.
     """
@@ -82,13 +88,20 @@ class MarketsService:
         records = self.data.get(dataset, [])
         if not records:
             return httpx.Response(200, json={"total": 0, "records": []})
+        date_field = _DATE_FIELDS.get(dataset)
         time_field = "TimeUTC" if "TimeUTC" in records[0] else "HourUTC"
         wanted: dict[str, list[str]] = (
             json.loads(params["filter"]) if "filter" in params else {}
         )
-        chosen = [
-            r for r in records if start <= datetime.fromisoformat(r[time_field]) < end
-        ]
+        if date_field is None:
+            chosen = [
+                r
+                for r in records
+                if start <= datetime.fromisoformat(r[time_field]) < end
+            ]
+        else:
+            first, last = params["start"][:10], params["end"][:10]
+            chosen = [r for r in records if first <= r[date_field][:10] < last]
         for name, values in wanted.items():
             if any(name not in r for r in chosen):
                 return httpx.Response(400, json={"message": f"no field {name}"})
@@ -126,3 +139,20 @@ def markets_records() -> MarketRecords:
 def markets_service(markets_records: MarketRecords) -> MarketsService:
     """A mock service serving `markets_records`; it also notes every request."""
     return MarketsService(markets_records)
+
+
+@pytest.fixture
+def pricelist_fixture() -> MarketRecords:
+    """The price-list fixture file: `records` and `catalogue`.
+
+    `records` is the full history of the tested charge codes; `catalogue` lists
+    every charge seen since 2025, without prices.
+    """
+    loaded: MarketRecords = json.loads(PRICELIST_FIXTURE.read_text(encoding="utf-8"))
+    return loaded
+
+
+@pytest.fixture
+def pricelist_service(pricelist_fixture: MarketRecords) -> MarketsService:
+    """A mock service serving the fixture's price-list records."""
+    return MarketsService({"DatahubPricelist": pricelist_fixture["records"]})

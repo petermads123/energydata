@@ -23,6 +23,8 @@ _ORIGIN = pd.Timestamp("2014-01-01", tz=DANISH_TZ)
 _HOUR = timedelta(hours=1)
 _PRICES = [f"Price{n}" for n in range(1, 25)]
 _COLUMNS = [
+    "GLN_Number",
+    "ChargeType",
     "ChargeTypeCode",
     "ValidFrom",
     "ValidTo",
@@ -107,7 +109,8 @@ def get_dso_tariffs(
         EnergiDataServiceError: If the service returns an unexpected payload
             or a row with an unknown `ResolutionDuration`.
         httpx.HTTPStatusError: If the service refuses a request.
-        RuntimeError: If a passed `client` is closed.
+        RuntimeError: If a passed `client` is closed and a request is needed
+            (none is made for a period before 2014).
     """
     known = _dso(dso)
     return _hourly_frame(
@@ -157,7 +160,8 @@ def get_energinet_tariffs(
         EnergiDataServiceError: If the service returns an unexpected payload
             or a row with an unknown `ResolutionDuration`.
         httpx.HTTPStatusError: If the service refuses a request.
-        RuntimeError: If a passed `client` is closed.
+        RuntimeError: If a passed `client` is closed and a request is needed
+            (none is made for a period before 2014).
     """
     return _hourly_frame(
         start,
@@ -212,7 +216,8 @@ def get_dso_subscriptions(
         EnergiDataServiceError: If the service returns an unexpected payload
             or a row with an unknown `ResolutionDuration`.
         httpx.HTTPStatusError: If the service refuses a request.
-        RuntimeError: If a passed `client` is closed.
+        RuntimeError: If a passed `client` is closed and a request is needed
+            (none is made for `sunds` or a period before 2014).
     """
     known = _dso(dso)
     return _period_frame(start, end, client, known.gln, known.subscription_codes)
@@ -254,7 +259,8 @@ def get_energinet_subscriptions(
         EnergiDataServiceError: If the service returns an unexpected payload
             or a row with an unknown `ResolutionDuration`.
         httpx.HTTPStatusError: If the service refuses a request.
-        RuntimeError: If a passed `client` is closed.
+        RuntimeError: If a passed `client` is closed and a request is needed
+            (none is made for a period before 2014).
     """
     return _period_frame(start, end, client, ENERGINET_GLN, ("41004",))
 
@@ -297,7 +303,8 @@ def get_electricity_tax(
         EnergiDataServiceError: If the service returns an unexpected payload
             or a row with an unknown `ResolutionDuration`.
         httpx.HTTPStatusError: If the service refuses a request.
-        RuntimeError: If a passed `client` is closed.
+        RuntimeError: If a passed `client` is closed and a request is needed
+            (none is made for a period before 2014).
     """
     return _hourly_frame(
         start,
@@ -311,7 +318,7 @@ def get_electricity_tax(
 
 def _dso(name: str) -> Dso:
     """Look a DSO up by friendly name, case-insensitively."""
-    found = DSOS.get(name.lower())
+    found = DSOS.get(name.lower()) if isinstance(name, str) else None
     if found is None:
         known = ", ".join(sorted(DSOS))
         raise ValueError(f"unknown DSO {name!r}; known DSOs: {known}")
@@ -396,7 +403,9 @@ def _load(
         The parsed rows, in the order the service returned them.
 
     Raises:
-        EnergiDataServiceError: If a row has another `ResolutionDuration`.
+        EnergiDataServiceError: If a record is of another GLN, charge type or
+            code than asked for, has another `ResolutionDuration`, or has a
+            missing, empty or unparseable `ValidFrom` or `ValidTo`.
     """
     if last <= _ORIGIN:
         return []
@@ -424,15 +433,30 @@ def _load(
     finally:
         if owned:
             active.close()
-    return _rows(records, codes, resolutions)
+    return _rows(records, gln, charge_type, codes, resolutions)
 
 
 def _rows(
-    records: Sequence[Record], codes: Sequence[str], resolutions: Sequence[str]
+    records: Sequence[Record],
+    gln: str,
+    charge_type: str,
+    codes: Sequence[str],
+    resolutions: Sequence[str],
 ) -> list[_Row]:
-    """Parse records into rows, refusing a resolution the caller cannot read."""
+    """Parse records into rows, refusing one that was not asked for.
+
+    A record of another GLN, charge type or code (a service that ignored the
+    filter) or with a resolution the caller cannot read raises, rather than
+    being priced as if it were the requested one.
+    """
     rows: list[_Row] = []
     for record in records:
+        if record.get("GLN_Number") != gln or record.get("ChargeType") != charge_type:
+            raise EnergiDataServiceError(
+                f"{DATASET}: unexpected record for GLN {record.get('GLN_Number')!r}, "
+                f"ChargeType {record.get('ChargeType')!r}; asked for GLN {gln!r}, "
+                f"ChargeType {charge_type!r}"
+            )
         code = record.get("ChargeTypeCode")
         if not isinstance(code, str) or code not in codes:
             raise EnergiDataServiceError(
@@ -477,9 +501,15 @@ def _local(value: object, code: str, name: str) -> pd.Timestamp | None:
         raise EnergiDataServiceError(
             f"{DATASET}: code {code!r} has an unparseable {name} {value!r}"
         ) from error
+    if pd.isna(stamp):
+        raise EnergiDataServiceError(
+            f"{DATASET}: code {code!r} has an empty {name} {value!r}"
+        )
     if stamp.tzinfo is None:
         return stamp.normalize().tz_localize(DANISH_TZ)
-    return stamp.tz_convert(DANISH_TZ)
+    return (
+        stamp.tz_convert(DANISH_TZ).tz_localize(None).normalize().tz_localize(DANISH_TZ)
+    )
 
 
 def _price(value: object, code: str, name: str) -> float:
