@@ -1,6 +1,6 @@
 # Shared HTTP utilities
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -284,6 +284,19 @@ which the conventions require.
 > Written in step 3. Only deviations from the plan above, each with its reason. "Built as
 > planned" is a complete and good entry. On a fix round, also the reproduction test's red
 > run, pasted here before the fix was written — step 6 cites it.
+
+Built as planned, with these small departures (signatures in the Public API table are unchanged):
+
+- `RetryError` takes a leading `message: str` (`RetryError(message, attempts, response)`), so
+  the two subclasses share one constructor path; the subclass signatures are as planned.
+  `ParseError` also carries a `detail` attribute (message without the format prefix) so
+  `read_zip` can re-wrap a member's error without doubling the prefix.
+- `RetryPolicy` validation uses negated comparisons, so NaN settings are rejected too.
+- A `Retry-After` of hundreds of digits parses to `inf` and so raises `HoldoffTooLongError`.
+- `read_response` passes `response.charset_encoding` to `read_csv` also when `fmt="csv"` is
+  given explicitly.
+- `STRUCTURE.md` names the utils modules and tests in prose; the signature tables are in
+  `.claude/rules/structure-utils.md`.
 
 ---
 

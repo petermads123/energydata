@@ -39,6 +39,7 @@ here, but everything in this file is in context every session.
 ```
 src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
+    utils/              shared HTTP utilities: retrying requests, body readers, date-range chunking
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -49,6 +50,16 @@ README.md               human setup guide
 CLAUDE.md               routing map for Claude
 STRUCTURE.md            this file
 ```
+
+## Subpackage: `src/energydata/utils/`
+
+Shared by the future source subpackages; `httpx` is the only runtime dependency. Detail
+(signatures and rules) lives in `.claude/rules/structure-utils.md`, loaded when working in
+this subpackage. Modules: `src/energydata/utils/__init__.py` (re-exports every public name),
+`src/energydata/utils/retry.py` (retrying sync/async request wrappers),
+`src/energydata/utils/readers.py` (JSON/XML/CSV/ZIP body readers) and
+`src/energydata/utils/chunking.py` (date-range windows and chunked fetch). Tests:
+`tests/test_retry.py`, `tests/test_readers.py`, `tests/test_chunking.py`.
 
 ## Package: `src/energydata/`
 
