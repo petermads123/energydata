@@ -103,9 +103,10 @@ a period. Nothing calls it yet; `heatingsystem` (another repo) is the expected c
 
 Assumptions:
 
-- Day-ahead fetches both *Elspotprices* and *DayAheadPrices* over the requested period;
-  where both have a value for a slot, the 15-minute dataset wins. No switch date is
-  hardcoded.
+- Day-ahead uses a fixed switch instant, 2025-10-01 00:00 `Europe/Copenhagen`: hourly
+  *Elspotprices* before it, 15-minute *DayAheadPrices* from it. Amended by the user during
+  step 5 (see the Amendments note below); it replaces the earlier "15-minute wins on
+  overlap, no switch date hardcoded" assumption.
 - A lone timestamp not on a 15-minute boundary is a `ValueError`, not rounded.
 - The development container cannot reach `api.energidataservice.dk` (proxy 403), so dataset
   and column names are taken from the API documentation and confirmed by the user running
@@ -116,7 +117,7 @@ Assumptions:
 | # | The finished feature... |
 |---|---|
 | A1 | `get_day_ahead_prices(start, end=None, bidding_zones=...)` returns a DataFrame with a tz-aware `Europe/Copenhagen` 15-minute index covering exactly `[start, end)` and one column per selected zone (`DK1`, `DK2`; both by default; in the order given), values EUR/MWh floats. |
-| A2 | Periods before the 15-minute switch return the hourly Elspot price forward-filled to all four quarter-hours; a period spanning the switch combines both datasets, and on overlap the 15-minute value wins. |
+| A2 | Slots before the switch to 15-minute prices (2025-10-01 00:00 Danish time) hold the hourly *Elspotprices* price repeated at :00, :15, :30 and :45; slots from the switch on hold only the *DayAheadPrices* value, and a null or missing one is NaN, never filled from hourly data. A period spanning the switch combines the two, and each side's dataset is requested only when the period overlaps that side. |
 | A3 | Naive input is read as Danish local time; a lone date returns that whole local day (92 / 96 / 100 rows on DST days); a lone timestamp returns one row; `end` is exclusive. `start >= end`, a misaligned lone timestamp, an unknown zone or an empty zone list raise `ValueError` naming the value. |
 | A4 | Slots with no published data are present as NaN — e.g. tomorrow before publication, or a period entirely in the future returns an all-NaN frame of the right shape. |
 | A5 | A source-agnostic `ApiClient` base in `energydata.utils` does the calling (base URL, retries via the existing wrapper, reusable and closable); the Energi Data Service client subclasses it, fetches a dataset by name with period, filter and columns, and returns every record, never a truncated page. Every Energi Data Service call goes through it. |
@@ -127,6 +128,16 @@ Assumptions:
 ### Open questions
 
 None.
+
+### Amendments
+
+- **2026-10-06, during step 5 — user decision.** The day-ahead rule was "fetch both datasets
+  over the whole period; where both have a value the 15-minute one wins". The user changed
+  it: hourly prices apply only to the period when prices were hourly, repeated over the four
+  quarter-hours; in the 15-minute period a missing price is NaN and never filled from
+  hourly data ("no prices should be missing"). A2 and the assumption above are rewritten
+  accordingly; section 2's guide 8, T7 and the Public API purpose of `get_day_ahead_prices`
+  follow it (fixed switch constant, per-side requests, no `combine_first` across the switch).
 
 ---
 
