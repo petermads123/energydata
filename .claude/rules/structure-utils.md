@@ -69,7 +69,7 @@ runnable as `python -m energydata.utils.<module>`.
 | `ApiClient(base_url: str, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, headers: Mapping[str, str] \| None = None, transport: httpx.AsyncBaseTransport \| None = None)` | Source-agnostic base. Owns one asyncio loop on a daemon thread, started on first use, with an `httpx.AsyncClient` and a semaphore on it. Empty `base_url` or `max_concurrency < 1` is a `ValueError`. Properties `base_url`, `max_concurrency`, `closed`. |
 | `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None) -> Parsed` | One request under the semaphore through `async_request_with_retry`, parsed with `read_response`. Subclass extension point; `RuntimeError` unless awaited on the client's own loop (inside `run`). |
 | `ApiClient.run[T](work: Callable[[], Awaitable[T]]) -> T` | Run `work()` on the client's loop and block. Safe from any thread, including one with a running loop. `RuntimeError` when closed or called from the loop thread. An interrupt cancels the work. |
-| `ApiClient.close() -> None` | Cancel remaining work, close the HTTP client, stop the loop, join the thread. Idempotent. |
+| `ApiClient.close() -> None` | Cancel remaining work, close the HTTP client, stop the loop, join the thread. Idempotent. `RuntimeError` if called from the client's own loop thread. |
 | `ApiClient.__enter__() -> Self`, `__exit__(*exc_info) -> None` | Context manager; exit closes. |
 | `main() -> None` | Showcase, offline through `httpx.MockTransport`. |
 

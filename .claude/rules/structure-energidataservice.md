@@ -18,8 +18,8 @@ showcase; the ones here call the live API.
 |---|---|
 | `BASE_URL: str` | `"https://api.energidataservice.dk"`. |
 | `type Record = dict[str, JsonValue]` | One dataset row. |
-| `EnergiDataServiceError(Exception)` | Payload without a `records` list, or with fewer records than its `total`. |
-| `EnergiDataServiceClient(*, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, max_span: timedelta = timedelta(days=31), transport: httpx.AsyncBaseTransport \| None = None)` | `ApiClient` on `BASE_URL`. Non-positive `max_span` is a `ValueError`. |
+| `EnergiDataServiceError(Exception)` | Payload that is not a JSON object, has no `records` list, has a record that is not a JSON object, or has fewer records than its `total`. |
+| `EnergiDataServiceClient(*, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, max_span: timedelta = timedelta(days=31), transport: httpx.AsyncBaseTransport \| None = None)` | `ApiClient` on `BASE_URL`. Non-positive `max_span` or `max_concurrency < 1` is a `ValueError`. |
 | `async EnergiDataServiceClient.fetch_dataset(dataset: str, start: datetime, end: datetime, *, filters: Mapping[str, Sequence[str]] \| None = None, columns: Sequence[str] \| None = None, sort_by: str \| None = None) -> list[Record]` | `GET /dataset/{dataset}` per `max_span` window, gathered concurrently; params `start`/`end` (UTC `YYYY-MM-DDTHH:MM`), `timezone=UTC`, `limit=0`, `filter` (compact JSON), `columns`, `sort`. Records concatenated in window order. Only awaitable on the client's loop. |
 | `EnergiDataServiceClient.get_dataset(dataset: str, start: datetime, end: datetime, *, filters=None, columns=None, sort_by=None) -> list[Record]` | The sync form, through `run`. |
 | `main() -> None` | Showcase (live API). |

@@ -1,6 +1,6 @@
 # Energi Data Service client and day-ahead prices
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -409,12 +409,13 @@ No deviation from the Public API table; every signature is as written. Smaller p
 
 | Check | Result |
 |---|---|
-| `ruff check .` | |
-| `ruff format --check .` | |
-| `mypy` | |
-| Plan completeness | every signature in the Public API table exists as written |
-| `STRUCTURE.md` | in sync |
-| `python -m <package>.<module>` | |
+| `ruff check .` | All checks passed |
+| `ruff format --check .` | 56 files already formatted |
+| `mypy` | Success: no issues found in 25 source files |
+| `pytest` | 802 passed, 1 failed: `tests/test_readers.py::test_httpx_is_the_only_runtime_dependency` (`2 == 1` dependencies), the planned step 5 edit, not a regression |
+| Plan completeness | Every row of the Public API table checked with `inspect.signature` against the code: all 16 signatures, constants (`DANISH_TZ`, `BIDDING_ZONES`, `BASE_URL`) and re-exports match. Missing: none. Deviation: none. Unplanned: none (`_gather_ordered` is private) |
+| `STRUCTURE.md` | Auditor items 3, 4 and 5 applied (error and constructor descriptions in `structure-energidataservice.md`, `ApiClient.close` `RuntimeError` in `structure-utils.md`). Items 1 and 2 are the test files and `tests/conftest.py` step 5 creates, so no edit. Otherwise in sync |
+| `python -m <package>.<module>` | `utils.api_client`, `periods`, `zones`, `frames`, `chunking`: exit 0, output informative, in the required showcase form (the re-export `RuntimeWarning` is expected). `energidataservice.client` and `day_ahead`: `httpx.ProxyError: 403 Forbidden` (container cannot reach the live API; per Risks, not a gate failure) |
 
 ---
 
