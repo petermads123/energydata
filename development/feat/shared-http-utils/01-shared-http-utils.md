@@ -1,6 +1,6 @@
 # Shared HTTP utilities
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | done |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -431,8 +431,10 @@ Drift found, and what was done about it:
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | `a3e63d4` Concept; `dbea116` Plan; `c207d83` Plan accepted; `cd46d3c`, `3c68a6a` WIP step 3; `152bb07` Add shared HTTP utilities subpackage; `4641496` Verify; `8bc7d5c` WIP step 5; `9ab082a` Test; `9ad0108` WIP step 6 (halt); `4760b25` Halt answered; `815b344` Concept check; plus the Ship commit |
+| Pushed to | `origin/feat/shared-http-utils` |
+
+Whole-tree gates at ship: `ruff check .` clean, `ruff format --check .` 47 files formatted, `mypy` no issues in 18 source files, `pytest` 803 passed. Diff against `main` reviewed: only `src/energydata/utils/`, three test files, `pyproject.toml`, `STRUCTURE.md`, `.claude/rules/structure-utils.md` and the plan file; no stray files. Every step 1 to 6 left a commit naming the round.
 
 ---
 
