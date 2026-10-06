@@ -95,7 +95,7 @@ XML is parsed with the standard library.
 
 | # | The finished feature... |
 |---|---|
-| A1 | Retries connection errors, timeouts, HTTP 429 and HTTP 500/502/503/504 up to the maximum number of attempts and returns the first successful response; any other 4xx or other error status is raised on the first attempt without retrying. |
+| A1 | Retries network errors (connection, read, write and close failures, and a dropped connection mid-response), timeouts, HTTP 429 and HTTP 500/502/503/504 up to the maximum number of attempts and returns the first successful response; any other 4xx or other error status, and any other transport error (including `httpx.ProxyError`), is raised on the first attempt without retrying. |
 | A2 | Without a server-stated holdoff, waits before retry *n* a delay that grows exponentially from the base delay, with random jitter, and never exceeds the maximum delay; all three are configurable. |
 | A3 | When a response carries `Retry-After` (seconds or an HTTP date), or a supplied holdoff function returns a value, waits that long instead of the computed delay; a holdoff longer than the cap raises immediately with an error stating the requested wait. |
 | A4 | When attempts are exhausted, raises one specific error type carrying the attempt count and the last response or exception. |
@@ -482,3 +482,10 @@ Question for the user: should a `ProxyError` be retried?
 - **Yes**: the failure to open a connection to the proxy is a connection error, and proxies do drop connections transiently. Cost: a permanently wrong proxy setting or proxy credentials is retried up to `max_attempts` times with backoff before failing.
 - **No** (as built): A1 stands as is; a proxy error is treated as configuration and fails at once. A1 could then say "network errors" or name the exception classes.
 Either answer is a one-line change to A1's wording or to `RETRY_EXCEPTIONS` plus a test; nothing else needs rework. `/build` resumes from step 6 once answered.
+
+**Answer (user, 2026-10-06):** No — do not retry proxy errors. A `ProxyError` is the proxy
+refusing the tunnel (typically 407 or 403), which is configuration; an unreachable proxy
+already surfaces as `ConnectError` and is retried. Section 1 changed: A1 now reads "network
+errors (connection, read, write and close failures, and a dropped connection mid-response)"
+and says any other transport error, including `httpx.ProxyError`, is raised on the first
+attempt. No code change; the behaviour step 5 pinned is now the agreed behaviour.
