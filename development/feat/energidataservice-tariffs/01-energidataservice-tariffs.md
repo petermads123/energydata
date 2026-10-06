@@ -1,6 +1,6 @@
 # Energi Data Service tariffs, subscriptions and elafgift
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -430,12 +430,14 @@ mapped subscription code `P1M` (104), so no row raises.
 
 | Check | Result |
 |---|---|
-| `ruff check .` | |
-| `ruff format --check .` | |
-| `mypy` | |
-| Plan completeness | every signature in the Public API table exists as written |
-| `STRUCTURE.md` | in sync |
-| `python -m <package>.<module>` | |
+| `ruff check .` | All checks passed! |
+| `ruff format --check .` | 72 files already formatted |
+| `mypy` | Success: no issues found in 39 source files |
+| `pytest` | 1484 passed |
+| Plan completeness | every signature in the Public API table exists as written (`Dso`, `DSOS`, five pricelist functions, `max_span` on `fetch_dataset`/`get_dataset`, both `main`); no Missing, Deviation or Unplanned |
+| `STRUCTURE.md` | auditor: in sync for step 3. Applied the leftover-"and" wording fix; the test-file entries (`test_pricelist.py`, `test_dsos.py`, fixture, `pricelist_service`) are step 5's, since the stop gate counts an entry for a missing file as drift |
+| `python -m energydata.energidataservice.dsos` | offline; prints 35 DSOs with GLNs and owners (expected RuntimeWarning) |
+| `python -m energydata.energidataservice.pricelist` | not re-run (rate limit); step 3's live run stands. Showcase is in the required form; fixed the comment saying "whole year" for a three-hour period |
 
 ---
 

@@ -76,7 +76,7 @@ Modules: `src/energydata/energidataservice/__init__.py` (re-exports the public n
 `src/energydata/energidataservice/client.py` (`EnergiDataServiceClient`),
 `src/energydata/energidataservice/day_ahead.py` (`get_day_ahead_prices`),
 `src/energydata/energidataservice/_markets.py` (private shared fetch-and-shape path),
-`src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices) and
+`src/energydata/energidataservice/balancing.py` (imbalance, aFRR and mFRR energy prices),
 `src/energydata/energidataservice/reserves.py` (mFRR/aFRR capacity, FCR-N, FCR-D, FCR DK1, FFR
 prices), `src/energydata/energidataservice/dsos.py` (`Dso`, `DSOS`, the friendly-name DSO table) and
 `src/energydata/energidataservice/pricelist.py` (DSO and Energinet tariffs and subscriptions, electricity

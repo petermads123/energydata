@@ -555,7 +555,7 @@ def main() -> None:
     print(f"{dso} tariff, DKK/kWh, {len(tariffs)} hours")
     print(tariffs.iloc[16:20])
 
-    # Energinet's tariffs for a whole year: one row per hour, constant per day.
+    # Energinet's tariffs for three hours: one row per hour, constant per day.
     start = "2026-01-01T00:00"
     end = "2026-01-01T03:00"
 
