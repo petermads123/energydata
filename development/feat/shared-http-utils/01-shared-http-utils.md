@@ -1,6 +1,6 @@
 # Shared HTTP utilities
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | in progress |
+| 6 | Concept check | `/concept-check` | in `/build` | done |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -398,7 +398,7 @@ Edge cases considered and deliberately skipped, with reasons:
 
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | `partially` | Statuses and `RETRY_STATUSES`, timeouts (`TimeoutException`) and `NetworkError` (connect, read, write, close) are retried, other statuses raised on the first attempt: `retry.py` `RETRY_*`, `request_with_retry`; tests `test_each_retried_status_is_retried_then_the_success_is_returned`, `test_each_retried_exception_is_retried_then_the_success_is_returned`, `test_other_error_statuses_raise_after_one_request`. Whether `httpx.ProxyError` (a `TransportError` outside `NetworkError`, "an error occurred while establishing a proxy connection") is a "connection error" is not decided by A1 — see Halted. |
+| A1 | yes | Against the amended wording: `RETRY_EXCEPTIONS = (TimeoutException, NetworkError, RemoteProtocolError)` covers timeouts, network errors (`ConnectError`, `ReadError`, `WriteError`, `CloseError` are all `NetworkError`) and a dropped connection mid-response (`RemoteProtocolError`); `RETRY_STATUSES = {429, 500, 502, 503, 504}`. Tests: `test_each_retried_status_is_retried_then_the_success_is_returned`, `test_each_retried_exception_is_retried_then_the_success_is_returned` (sync and async), `test_other_error_statuses_raise_after_one_request`. `httpx.ProxyError` propagates on the first attempt: `test_an_exception_outside_the_retry_set_propagates_after_one_request[ProxyError]` (tests/test_retry.py:250) asserts the very exception is raised, one request, no sleep, in sync and async; run here, 14 passed. |
 | A2 | yes | `backoff_delay` (`retry.py`): cap `min(max_delay, base*2**(n-1))`, value in `[cap/2, cap]`; `RetryPolicy` fields configurable; `test_backoff_delay_*`, `test_the_wrappers_sleep_the_backoff_delays`. |
 | A3 | yes | `retry_after_seconds` (seconds, HTTP date), `holdoff_reader` wins, a holdoff is slept uncapped by `max_delay`, over `max_holdoff` raises `HoldoffTooLongError` naming wait and cap: `test_the_retry_after_header_replaces_the_computed_delay`, `test_a_holdoff_over_the_cap_raises_without_sleeping_or_retrying`, `test_a_holdoff_equal_to_the_cap_is_slept`; showcase prints `slept: [1.0]`. |
 | A4 | yes | `RetriesExhaustedError(attempts, response, exception)`, one specific type with attempts and last response/exception: `test_exhausted_by_status_sets_the_response_and_not_the_exception`, `test_exhausted_by_a_transport_error_sets_and_chains_the_exception`. |
@@ -413,7 +413,7 @@ Drift found, and what was done about it:
 - Out of scope, surface, connections: nothing from the exclusion list was built (no auth, URLs, DataFrames, throttling, caching, size limits; async chunking is sequential). No caller uses the package yet, as the concept says. No public API beyond the three parts.
 - Showcases: all three run, exit 0, read as inputs/call/output examples.
 - Structure: the structure-auditor's two wording fixes applied to `.claude/rules/structure-utils.md` (async wrapper's real signature; the Tests section naming what each suite checks). `STRUCTURE.md` needed none.
-- **`httpx.ProxyError` against A1: unresolved, halted.** A1 lists "connection errors". A `ProxyError` is raised while establishing the connection to a proxy, which reads as a connection error, yet it is also what a misconfigured proxy or a 407 produces, which a retry cannot cure; the concept names neither. `RETRY_EXCEPTIONS` (section 2) excludes it and step 5 pinned that. Deciding either way changes what is retried, which is section 1's call.
+- `httpx.ProxyError` against A1: raised in the first run as unresolved; the user answered No (see Halted), A1 was amended, and the built behaviour (not retried, pinned by test) now matches it. No code change, no remaining drift.
 
 ### Earlier rounds still hold
 
