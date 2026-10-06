@@ -64,7 +64,9 @@ def block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.Dateti
     every local hour that is a multiple of `hours` (for 4 hours: 00, 04, ...,
     20). A DST change makes the block that contains it shorter or longer but
     never moves a start. A wall-clock start that occurs twice (the repeated
-    autumn hour) is kept once, the earlier.
+    autumn hour) is kept once, the earlier; one that does not exist (the
+    skipped spring hour, for a `hours` that would start a block in it) is
+    absent.
 
     Args:
         start: First block start, inclusive. Must be timezone-aware.
@@ -87,7 +89,13 @@ def block_index(start: pd.Timestamp, end: pd.Timestamp, hours: int) -> pd.Dateti
     if start >= end:
         raise ValueError(f"start must be before end, got start={start!r} end={end!r}")
     for name, stamp in (("start", start), ("end", end)):
-        if stamp.hour % hours or stamp.minute or stamp.second or stamp.nanosecond:
+        if (
+            stamp.hour % hours
+            or stamp.minute
+            or stamp.second
+            or stamp.microsecond
+            or stamp.nanosecond
+        ):
             raise ValueError(
                 f"{name} must be the start of a {hours}-hour block, got {stamp!r}"
             )
@@ -251,13 +259,16 @@ def combine_levels(
         A `float64` frame whose index is exactly `index`.
 
     Raises:
-        ValueError: If `parts` or `outer` is empty, or a part has a duplicate
-            index entry.
+        ValueError: If `parts` or `outer` is empty, `outer` repeats a name, or a
+            part has a duplicate index entry.
     """
     if not parts:
         raise ValueError("parts must not be empty")
     if not outer:
         raise ValueError("outer must not be empty")
+    repeated = sorted({name for name in outer if list(outer).count(name) > 1})
+    if repeated:
+        raise ValueError(f"outer must not repeat a name, got {repeated}")
     conformed = {key: conform(part, index, outer) for key, part in parts.items()}
     joined = pd.concat(conformed, axis=1).swaplevel(axis=1)
     order = pd.MultiIndex.from_product([list(outer), list(conformed)])

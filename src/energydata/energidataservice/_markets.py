@@ -38,6 +38,9 @@ class _Market:
         extra_filters: Further request filters, such as the FCR product name.
         volume_fields: Output column name to source field for the volumes
             added by `include_volumes`.
+        activation_fields: Output column name to the activated-volume field
+            whose value 0 blanks that column's price (NaN) in that slot; a
+            missing activated volume leaves the price as published.
         block_hours: Set for a market indexed by wall-clock blocks of this many
             hours, whose records are hourly; `None` otherwise.
     """
@@ -50,6 +53,7 @@ class _Market:
     area: str | None = None
     extra_filters: Mapping[str, Sequence[str]] = field(default_factory=dict)
     volume_fields: Mapping[str, str] = field(default_factory=dict)
+    activation_fields: Mapping[str, str] = field(default_factory=dict)
     block_hours: int | None = None
 
 
@@ -86,7 +90,8 @@ def _get(
         columns.update(market.volume_fields)
     sources = list(dict.fromkeys(columns.values()))
     filters: dict[str, Sequence[str]] = dict(market.extra_filters)
-    requested = [market.time_field, *sources]
+    gates = list(dict.fromkeys(market.activation_fields.values()))
+    requested = [market.time_field, *sources, *gates]
     if market.zoned:
         filters[AREA] = list(zones)
         requested.insert(1, AREA)
@@ -118,9 +123,18 @@ def _get(
             )
             for source in sources
         }
-        return combine_levels(
-            {name: wide[source] for name, source in columns.items()}, index, zones
-        )
+        gate_wide = {
+            source: records_to_wide(
+                records, time=market.time_field, column=AREA, value=source
+            )
+            for source in gates
+        }
+        parts = {name: wide[source] for name, source in columns.items()}
+        for name, gate in market.activation_fields.items():
+            price = parts[name]
+            volume = gate_wide[gate].reindex(index=price.index, columns=price.columns)
+            parts[name] = price.where(volume != 0)
+        return combine_levels(parts, index, zones)
 
     key = market.area if market.area is not None else _KEY
     keyed: Sequence[Mapping[str, object]] = (

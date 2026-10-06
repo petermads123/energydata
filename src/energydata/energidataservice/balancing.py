@@ -26,6 +26,7 @@ _AFRR_ENERGY = _Market(
     fields={"up": "aFRRVWAUpEUR", "down": "aFRRVWADownEUR"},
     resolution=_QUARTER,
     zoned=True,
+    activation_fields={"up": "aFRRUpMW", "down": "aFRRDownMW"},
 )
 _MFRR_ENERGY = _Market(
     dataset="MfrrEnergyActivationMarket",
@@ -100,13 +101,15 @@ def get_afrr_energy_prices(
     | Resolution | 15 minutes |
     | Format | wide: MultiIndex columns `(zone, "up" | "down")`, float |
     | Zones | `DK1`, `DK2` |
-    | Source dataset | *ImbalancePrice* (`TimeUTC`, `PriceArea`, `aFRRVWAUpEUR`, `aFRRVWADownEUR`) |
+    | Source dataset | *ImbalancePrice* (`TimeUTC`, `PriceArea`, `aFRRVWAUpEUR`, `aFRRVWADownEUR`, `aFRRUpMW`, `aFRRDownMW`) |
     | Data from | 2025-03-04 (first record 12:15 UTC) (earlier slots are NaN) |
 
     The index is tz-aware `Europe/Copenhagen` and covers exactly `[start, end)`.
     `up` is the volume-weighted average price of upward aFRR activation
     (`aFRRVWAUpEUR`) and `down` that of downward activation
-    (`aFRRVWADownEUR`); a direction not activated in a slot is NaN.
+    (`aFRRVWADownEUR`). The service publishes 0.0 for a direction with no
+    activation; that is returned as NaN, where the direction's activated volume
+    (`aFRRUpMW`, `aFRRDownMW`) is 0.
     A slot with no published value is NaN, never filled from a neighbour.
 
     Args:
@@ -155,8 +158,9 @@ def get_mfrr_energy_prices(
 
     The index is tz-aware `Europe/Copenhagen` and covers exactly `[start, end)`.
     `up` is the scheduled-activation marginal price upward (`mFRRSAUpEUR`) and
-    `down` the one downward (`mFRRSADownEUR`); a direction not activated in a
-    slot is NaN. Direct-activation prices are not included.
+    `down` the one downward (`mFRRSADownEUR`), both as published: the service
+    publishes the marginal price whether or not anything was activated.
+    Direct-activation prices are not included.
     A slot with no published value is NaN, never filled from a neighbour.
 
     Args:
@@ -196,7 +200,7 @@ def main() -> None:
     print(f"{len(prices)} quarter-hours of imbalance prices, EUR/MWh")
     print(prices.tail(4))
 
-    # Up and down activation prices differ; a zone with no activation is NaN.
+    # Up and down activation prices differ; a direction with no activation is NaN.
     bidding_zones = ["DK1"]
 
     prices = get_afrr_energy_prices(start, end, bidding_zones)

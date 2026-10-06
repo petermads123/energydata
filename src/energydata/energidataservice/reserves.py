@@ -109,6 +109,7 @@ def get_mfrr_capacity_prices(
     one (`DownPriceEUR`), in EUR/MW/h. The volumes are the demand and the
     procured volume per direction (`UpDemandMW`, `UpProcuredMW`,
     `DownDemandMW`, `DownProcuredMW`).
+    Prices are returned as published, 0.0 (nothing procured) included.
     A slot with no published value is NaN, never filled from a neighbour.
 
     Args:
@@ -160,7 +161,8 @@ def get_afrr_capacity_prices(
     The index is tz-aware `Europe/Copenhagen` and covers exactly `[start, end)`.
     Same fields and columns as `get_mfrr_capacity_prices`. The request filters
     to the selected Danish zones, so the Nordic zones the dataset also holds
-    are never returned.
+    are never returned. Prices are returned as published, 0.0 (nothing
+    procured) included.
     A slot with no published value is NaN, never filled from a neighbour.
 
     Args:
@@ -369,7 +371,7 @@ def get_fcr_dk1_prices(
         start: First moment of the period. A date means local midnight; a
             naive value is read as Danish local time.
         end: First moment after the period (exclusive). `None` means the whole
-            local day when `start` is a date, or one slot when it is a
+            local day when `start` is a date, or one 4-hour block when it is a
             timestamp.
         include_volumes: Whether to add the volume columns, in MW:
             `domestic` and `abroad`.
@@ -381,7 +383,7 @@ def get_fcr_dk1_prices(
         then `domestic` and `abroad` when `include_volumes` is true.
 
     Raises:
-        ValueError: If `start >= end`, a timestamp is not on a slot boundary, a
+        ValueError: If `start >= end`, a bound is not a 4-hour block start, a
             time is nonexistent or ambiguous, a string does not parse.
         EnergiDataServiceError: If the service returns an unexpected payload.
         httpx.HTTPStatusError: If the service refuses a request.
