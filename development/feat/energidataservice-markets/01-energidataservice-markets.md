@@ -1,6 +1,6 @@
 # Energi Data Service market price endpoints
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | done |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -502,8 +502,10 @@ Drift found, and what was done about it:
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | 8d8dcc8 Concept; dd6ea61 WIP step 2; 4bc3601 Plan; 2d85265 Plan accepted; c2bb425 WIP step 3; 039fe24 Add market price endpoints; da0d134 Verify; ca434b0 Concept amended before step 5; ce846e4 WIP step 5; a6ded7e Test; 955a44c Concept check; plus the Ship commit |
+| Pushed to | `origin/feat/energidataservice-markets` |
+
+Whole-tree gates at ship: `ruff check` clean, `ruff format --check` clean (69 files), `mypy` clean (37 files), `pytest` 1484 passed. Every step from 1 left a commit. Diff review against `origin/main`: no stray files. `development/feat/energidataservice-markets/eds_probe.json` is the user's probe from step 1 that the test fixture was derived from; kept deliberately.
 
 ---
 
