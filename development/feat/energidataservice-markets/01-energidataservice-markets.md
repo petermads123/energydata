@@ -511,9 +511,7 @@ Whole-tree gates at ship: `ruff check` clean, `ruff format --check` clean (69 fi
 
 ## 8. Recommendations
 
-| # | Recommendation | Why it is critical | Effort | Decision |
-|---|---|---|---|---|
-| R1 | Tariffs, subscriptions and elafgift (DSO and Energinet C-customer tariffs, subscriptions, electricity tax) from *DatahubPricelist*, as round 2 on this branch and PR | user's request (after PR #4 opened) | large | next round |
+None.
 
 ---|---|---|---|---|
 | R1 | | | | |
