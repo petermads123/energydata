@@ -102,7 +102,7 @@ The only pandas-using module besides `periods.py`. Every frame it builds has a
 | `records_to_wide(records: Sequence[Mapping[str, object]], *, time: str, column: str, value: str, tz: str = DANISH_TZ) -> pd.DataFrame` | Pivot long records to a float frame (naive times are UTC, `None` is NaN, empty input gives an empty tz-aware frame). `ValueError` for a missing field, an unparseable value or a duplicate (`time`, `column`). |
 | `expand_to_resolution(frame: pd.DataFrame, source: timedelta, target: timedelta) -> pd.DataFrame` | Repeat each row over the finer slots it covers; gaps stay gaps. `ValueError` unless `source` is a positive whole multiple of `target`. |
 | `conform(frame: pd.DataFrame, index: pd.DatetimeIndex, columns: Sequence[str]) -> pd.DataFrame` | Reindex to exactly `index` x `columns` as float64, NaN where missing, never filled from a neighbour. `ValueError` for a duplicate index. |
-| `combine_levels(parts: Mapping[str, pd.DataFrame], index: pd.DatetimeIndex, outer: Sequence[str]) -> pd.DataFrame` | Conform each part to `index` and `outer`, then join with MultiIndex columns `(outer, part key)`, outer first then `parts` order; float64. `ValueError` for empty `parts` or `outer`, or a repeated `outer` name. |
+| `combine_levels(parts: Mapping[str, pd.DataFrame], index: pd.DatetimeIndex, outer: Sequence[str]) -> pd.DataFrame` | Conform each part to `index` and `outer`, then join with MultiIndex columns `(outer, part key)`, outer first then `parts` order; float64. `ValueError` for empty `parts` or `outer`, a repeated `outer` name, or a part with a duplicate index entry. |
 | `main() -> None` | Showcase. |
 
 ## Tests

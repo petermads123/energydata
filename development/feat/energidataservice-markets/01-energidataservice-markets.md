@@ -1,6 +1,6 @@
 # Energi Data Service market price endpoints
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | done |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -473,9 +473,23 @@ Edge cases considered and deliberately skipped, with reasons:
 
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | Ten functions, tz-aware Copenhagen index over exactly `[start, end)`, day-ahead period rules | yes | All ten import from `energydata.energidataservice` (docstring dump). `test_the_period_gives_every_quarter_hour_and_end_is_exclusive`, `test_a_naive_time_is_danish_time`, `test_a_bad_period_raises_naming_the_value_with_no_request` (both modules), `test_an_hourly_lone_date_has_the_length_of_the_local_day`, `test_an_hourly_lone_timestamp_is_one_slot_or_one_block`. Live: imbalance 2026-09-15 gives 96 rows. |
+| A2 | Resolutions: 15 min / hourly not filled / FCR DK1 4-hour blocks | yes | `test_fcr_dk1_fixture_day_has_six_four_hour_blocks`, `test_fcr_dk1_dst_day_has_six_blocks_each_holding_its_first_hours_value`, `block_index` DST tests. Live: aFRR capacity 2026-09-15 is 24 rows at freq `h`; FCR DK1 gives 6 blocks at 00/04/.../20; imbalance 96 rows. Hourly markets never fill (`test_nothing_is_filled_from_a_neighbour`). |
+| A3 | Zone x up/down columns; imbalance repeated; aFRR NaN where activated MW is 0 (amended); mFRR SA as published; capacity as published, NaN only for no record or null; non-DK zones dropped | yes | `test_imbalance_repeats_its_single_price_...`, `test_afrr_energy_is_nan_for_a_direction_with_zero_activated_volume`, `..._masks_each_direction_and_zone_on_its_own_volume`, `test_mfrr_energy_keeps_a_zero_price_as_published`, `test_capacity_prices_are_returned_as_published_zero_included`, `test_the_latest_capacity_record_has_a_zero_down_price_not_nan`, `test_afrr_capacity_never_returns_a_nordic_zone_even_if_one_is_served`. Live 2026-09-15 DK1 aFRR energy: up NaN at 23:00/23:15 (no activation), down 100.91/66.46; mFRR capacity down 0.00 shown as published; imbalance and mFRR values match the probe (171.04, 254.17). |
+| A4 | FCR-N, FCR-D up/down, FFR: `price` column, no zone argument; FCR DK1: `cross_border`/`danish` | yes | `test_dk2_functions_take_no_zone_argument`, `test_dk2_prices_equal_the_fixture_totals`, `test_fcr_takes_the_dk2_row_not_a_swedish_row_with_the_same_price`. Live showcase: FCR-D down `price` 22:00 = 2.872822 (Total), FCR DK1 columns `cross_border`/`danish`. |
+| A5 | EUR; EUR/MWh energy, EUR/MW/h capacity | yes | Property tables in all ten docstrings and README Currency column (read, and printed by script); no FX code (`grep` of `src/energydata/energidataservice`). Values match EUR probe fields. |
+| A6 | `include_volumes=False` default; volumes added in MW per market | yes | `test_capacity_volumes_are_zone_major_in_the_documented_order`, `test_capacity_without_volumes_requests_and_returns_only_prices`, `test_fcr_dk1_volumes_and_the_exact_request`, `test_ffr_values_zero_and_spike_are_kept`, `test_dk2_volumes_are_off_by_default`. Live: FCR-D down with volumes gives `price, purchased_local, purchased_total` (59.8 / 574.0). |
+| A7 | NaN for unpublished and pre-start; through client, concurrent; works in a running loop | yes | `test_a_period_before_the_dataset_is_all_nan_and_still_requested`, `test_an_empty_response_keeps_the_named_columns_and_the_full_index`, `test_windows_of_a_long_period_run_concurrently`, `test_a_call_works_inside_a_running_event_loop`; `_markets._get` fetches only via `EnergiDataServiceClient.fetch_dataset` inside `client.run`. |
+| A8 | README table and each docstring give dataset, start date, currency, unit, resolution, format, zones; names from probe; fixtures; tests offline | yes | README.md lines 37-46: ten rows each with currency/unit, resolution, format, zones, dataset and start date. All ten docstrings carry the property table with Currency and unit, Resolution, Format, Zones, Source dataset and Data from (printed and read in this step); dataset and field names match the live API (every showcase and call above returned data from these datasets) and `tests/fixtures/energidataservice_markets.json` (seven datasets). Tests use `MarketsService` with the autouse no-network guard. The documentation content itself has no executable assertion (T8 was skipped by step 5); A8 asks for the documentation to exist, not for a test of its wording, so this is judged met on the read, and the gap is recorded below. |
 
 Drift found, and what was done about it:
+
+- No code drift and no out-of-scope items (no tariffs, no DA mFRR, no FX, no change to `get_day_ahead_prices`; `git diff main --stat` touches only the planned files).
+- Surface: exactly the ten functions plus `block_index` and `combine_levels`, as planned; `_markets.py` is private.
+- Showcases: `balancing` and `reserves` ran live this step and read as worked examples (named inputs, one call, a named result).
+- Gates: `pytest` 1484 passed (including `tests/test_day_ahead.py` and `tests/test_energidataservice_client.py`, 115 passed on their own), `ruff check` clean, `mypy` clean on 37 files.
+- Structure auditor, three items, all applied: (1) `combine_levels` row in `.claude/rules/structure-utils.md` now lists the duplicate-index `ValueError`; (2) the `MarketsService` description in `.claude/rules/structure-energidataservice.md` now names `client(...)`, the 400 for unknown fields, and the request-reading helpers; (3) `tests/conftest.py` added to that file's `paths`. `STRUCTURE.md` needed no change.
+- Gap, not drift: no test pins the docstring or README wording (T8). Recorded for step 8 as a possible low-priority note, not critical.
 
 ### Earlier rounds still hold
 

@@ -6,6 +6,7 @@ paths:
   - "tests/test_balancing.py"
   - "tests/test_reserves.py"
   - "tests/fixtures/**"
+  - "tests/conftest.py"
 ---
 
 # Structure: `src/energydata/energidataservice/`
@@ -86,5 +87,8 @@ Written at step 5, none touching the network: `tests/test_energidataservice_clie
 `tests/fixtures/energidataservice_markets.json`. `tests/conftest.py` carries the support: the
 `markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
 that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
-does, notes every request, and can ignore the filter or answer with a custom response) and
-the `markets_service` fixture.
+does, answers 400 for a filter field or column the records lack, notes every request
+(`requests`, read back with `datasets()`, `params(dataset=None)` and `filters(dataset=None)`),
+can ignore the filter (`honour_filter`) or answer with a custom response (`respond`), and
+builds a real client on itself with `client(max_span=timedelta(days=31))`) and the
+`markets_service` fixture.
