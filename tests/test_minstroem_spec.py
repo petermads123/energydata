@@ -717,7 +717,7 @@ def test_dash_m_live_collects_every_live_test() -> None:
     )
 
     collected = [
-        l for line in result.stdout.splitlines() if "<Function test_live_" in line
+        line for line in result.stdout.splitlines() if "<Function test_live_" in line
     ]
     assert result.returncode == 0
     assert len(collected) >= 18
