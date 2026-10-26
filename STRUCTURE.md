@@ -41,6 +41,7 @@ src/                    everything installable; nothing outside it is packaged
   energydata/           the package itself
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
     energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
+    minstroem/          Min Strøm Consumer API: client, addresses, consumption, solar export, costs, prices and price forecast
 tests/                  pytest suite, one test_<module>.py per module
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
@@ -87,6 +88,25 @@ probe's real records for the seven market datasets), `tests/fixtures/energidatas
 (live price-list history for Energinet and six DSOs, plus a catalogue of every charge since 2025),
 `tests/test_energidataservice_client.py`, `tests/test_day_ahead.py`, `tests/test_balancing.py`,
 `tests/test_reserves.py`, `tests/test_dsos.py` and `tests/test_pricelist.py`.
+
+## Subpackage: `src/energydata/minstroem/`
+
+The Min Strøm Consumer API on top of `utils`; needs an API key (`MINSTROEM_API_KEY`). Detail
+lives in `.claude/rules/structure-minstroem.md`, loaded when working in this subpackage.
+Modules: `src/energydata/minstroem/__init__.py` (re-exports the public names),
+`src/energydata/minstroem/client.py` (`MinStroemClient`, `MinStroemError`),
+`src/energydata/minstroem/_series.py` (private shared path of the period endpoints),
+`src/energydata/minstroem/addresses.py` (`get_addresses`),
+`src/energydata/minstroem/usage.py` (`get_consumption`, `get_solar_export`),
+`src/energydata/minstroem/costs.py` (`get_consumption_costs`, `get_solar_export_revenue`) and
+`src/energydata/minstroem/prices.py` (`get_prices`, `get_forecast_prices`,
+`get_prices_with_forecast`). Tests: `tests/conftest.py` (also the `MinStroemService` mock, the
+`live_report` fixture and the live summary hook), `tests/fixtures/minstroem_openapi.json` (the
+published OpenAPI spec), `tests/test_minstroem_client.py`, `tests/test_minstroem_series.py`,
+`tests/test_minstroem_addresses.py`, `tests/test_minstroem_usage.py`,
+`tests/test_minstroem_costs.py`, `tests/test_minstroem_prices.py`, `tests/test_minstroem_spec.py`
+and `tests/test_minstroem_live.py` (marked `live`, skipped without a key, deselected by plain
+`pytest`).
 
 ## Package: `src/energydata/`
 

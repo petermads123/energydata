@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -439,6 +439,22 @@ entry and at least one test intent; no public entry lacks a criterion.
 > Written in step 3. Only deviations from the plan above, each with its reason. "Built as
 > planned" is a complete and good entry. On a fix round, also the reproduction test's red
 > run, pasted here before the fix was written — step 6 cites it.
+
+Built as planned, with these small departures:
+
+- A 2xx body that is not valid JSON is a `MinStroemError` with `status=200` rather than
+  "the 2xx status": `ApiClient.request` does not expose the response, and a GET success is
+  200. Public signatures are unchanged.
+- The Public API table's `main()` for `client.py` lists addresses' regions and capabilities,
+  as planned; the shared "no key, print one line" check is a private helper
+  `_showcase_has_key` in `client.py`, imported by the other modules.
+- `_series.main()` is offline except for one extra address lookup when a key is set.
+- Usage caps in the mock (`MinStroemService`) follow the concept table (366 days at `hour`,
+  five calendar years at `day`/`month`/`year`); T13's "hourly/daily usage" wording was read
+  that way because the plan's window table spans four years at usage `day`.
+- `STRUCTURE.md` and `structure-minstroem.md` already name the seven offline test files that
+  step 5 writes, so the structure check reports them as missing until then.
+- No deviation touches section 1.
 
 ---
 

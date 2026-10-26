@@ -128,3 +128,5 @@ builds a real client on itself with `client(max_span=timedelta(days=31))`; for
 `start`/`end`, `end` exclusive, as the API does), the `markets_service` fixture, the
 `pricelist_fixture` fixture (the price-list file) and the `pricelist_service` fixture (a
 `MarketsService` on its records).
+
+`tests/conftest.py` also holds the Min Strøm support (`MinStroemService`, `live_report`; see `structure-minstroem.md`), and its no-network guard lets a test marked `live` through.
