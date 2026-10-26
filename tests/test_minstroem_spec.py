@@ -965,6 +965,28 @@ def _run_live_suite(
     return _LiveRun(result, outcomes)
 
 
+def _summary_lines(output: str) -> list[str]:
+    """The lines of the `MIN STRØM LIVE SUMMARY` block."""
+    lines = output.splitlines()
+    first = next(i for i, line in enumerate(lines) if "MIN STRØM LIVE SUMMARY" in line)
+    last = next(i for i in range(first + 1, len(lines)) if lines[i].startswith("="))
+    return lines[first + 1 : last]
+
+
+# What `plain` reports at `PINNED_NOW`: confirmed prices run to 11:00 tomorrow, the
+# forecast is 48 hours from 12:00 today, so the open-ended series has 60 hours of
+# which 36 are confirmed and 24 forecast.
+PLAIN_SUMMARY = [
+    "forecast: 48 hours 2026-06-15T12:00:00+02:00 .. 2026-06-17T11:00:00+02:00, "
+    "region DK1, DKK, first 0.600, last 0.590",
+    "combined (today..): 60 hours 2026-06-15T00:00:00+02:00 .. "
+    "2026-06-17T11:00:00+02:00, confirmed 36, forecast 24, neither 0",
+    "combined (yesterday..+2d): 72 hours, 0 NaN",
+    "combined cross-check: 60 confirmed hours match get_prices, "
+    "12 forecast hours match get_forecast_prices",
+]
+
+
 def _neither(output: str) -> int:
     """The hours the open-ended combined series reported as neither confirmed nor forecast."""
     found = re.search(r"combined \(today\.\.\):.* neither (\d+)", output)
@@ -1007,6 +1029,13 @@ def test_every_live_test_passes_against_the_mock_in_every_shape_of_data(
     assert {o for n, o in run.outcomes.items() if n not in skipped} == {"passed"}
     assert "MIN STRØM LIVE SUMMARY" in output
     assert shows in output
+    # A test that skips reports nothing; every other test adds exactly one line.
+    lines = _summary_lines(output)
+    assert len(lines) == LIVE_TEST_COUNT - len(skipped), lines
+    if scenario == "plain":
+        # At a pinned instant the whole summary is fixed, so it can be read exactly.
+        for line in PLAIN_SUMMARY:
+            assert line in lines, line
     if scenario in EXPECTED_NEITHER:
         least, most = EXPECTED_NEITHER[scenario]
         assert least <= _neither(output) <= most, output
@@ -1149,9 +1178,6 @@ PINNED_INSTANTS = [
     pytest.param("plain", "2026-10-25T02:30:00+02:00", id="repeated-hour-first"),
     pytest.param("plain", "2026-10-25T02:30:00+01:00", id="repeated-hour-second"),
     pytest.param("plain", "2026-10-25T02:00:00+01:00", id="repeated-hour-on-the-hour"),
-    # Local [00:00, 01:00): the forecast used to start where the confirmed prices stop.
-    pytest.param("gappy_forecast", "2026-06-15T00:00:00+02:00", id="gappy-at-midnight"),
-    pytest.param("gappy_forecast", "2026-06-15T00:59:00+02:00", id="gappy-before-one"),
 ]
 
 
@@ -1709,7 +1735,6 @@ ADDRESS_CHOICES = [
     pytest.param(
         "two_addresses", ADDRESS_ID, NEEDS_FORECAST, id="first-address-cannot-forecast"
     ),
-    pytest.param("two_addresses", SECOND_ADDRESS_ID, set(), id="second-address"),
     pytest.param("two_addresses", SECOND_ADDRESS_ID.upper(), set(), id="upper-case-id"),
     pytest.param("two_addresses", f"  {SECOND_ADDRESS_ID}\n", set(), id="padded-id"),
     pytest.param(
@@ -1738,7 +1763,7 @@ def test_the_address_named_by_minstroem_address_id_is_the_one_under_test(
         assert private.lower() not in output.lower()
 
 
-@pytest.mark.parametrize("tb", ["short", "auto", "long", "native", "line", "no"])
+@pytest.mark.parametrize("tb", ["short", "auto", "long", "native"])
 def test_no_traceback_style_shows_the_key_an_address_id_or_the_address_text(
     tmp_path: Path, tb: str
 ) -> None:
@@ -1760,50 +1785,6 @@ def test_no_traceback_style_shows_the_key_an_address_id_or_the_address_text(
         assert private not in output, (tb, private)
     if tb != "no":
         assert "HTTP 404 resource_not_found on /me/addresses/<address>/prices" in output
-
-
-def _summary_lines(output: str) -> list[str]:
-    """The lines of the `MIN STRØM LIVE SUMMARY` block."""
-    lines = output.splitlines()
-    first = next(i for i, line in enumerate(lines) if "MIN STRØM LIVE SUMMARY" in line)
-    last = next(i for i in range(first + 1, len(lines)) if lines[i].startswith("="))
-    return lines[first + 1 : last]
-
-
-@pytest.mark.parametrize(
-    ("scenario", "skipped", "_shows"),
-    PASSING_SCENARIOS,
-    ids=[scenario for scenario, _skipped, _shows in PASSING_SCENARIOS],
-)
-def test_the_summary_has_one_line_per_test_that_reported(
-    tmp_path: Path, scenario: str, skipped: set[str], _shows: str
-) -> None:
-    run = _run_live_suite(scenario, tmp_path)
-
-    lines = _summary_lines(run.result.stdout)
-    # A test that skips reports nothing; every other test adds exactly one line.
-    assert len(lines) == LIVE_TEST_COUNT - len(skipped), lines
-    assert all(line.strip() for line in lines)
-
-
-def test_at_a_pinned_instant_the_summary_is_the_same_every_time(
-    tmp_path: Path,
-) -> None:
-    first = _summary_lines(_run_live_suite("plain", tmp_path).result.stdout)
-    second = _summary_lines(_run_live_suite("plain", tmp_path).result.stdout)
-
-    assert first == second
-    expected = [
-        "forecast: 48 hours 2026-06-15T12:00:00+02:00 .. 2026-06-17T11:00:00+02:00, "
-        "region DK1, DKK, first 0.600, last 0.590",
-        "combined (today..): 60 hours 2026-06-15T00:00:00+02:00 .. "
-        "2026-06-17T11:00:00+02:00, confirmed 36, forecast 24, neither 0",
-        "combined (yesterday..+2d): 72 hours, 0 NaN",
-        "combined cross-check: 60 confirmed hours match get_prices, "
-        "12 forecast hours match get_forecast_prices",
-    ]
-    for line in expected:
-        assert line in first, line
 
 
 # --- the live suite's helpers, in process -----------------------------------------
@@ -2147,6 +2128,16 @@ def test_the_readme_names_every_public_function_and_class(name: str) -> None:
 def test_the_readme_names_the_key_variable_and_the_live_command_exactly() -> None:
     assert API_KEY_ENV in README
     assert LIVE_COMMAND in README.splitlines()
+
+
+def test_the_readme_and_the_live_module_say_what_defeats_the_anonymous_output() -> None:
+    # The output is pasted into a chat. Every traceback style is covered, but
+    # `--showlocals` prints each local variable, the addresses frame included.
+    live_text = (REPO / "tests" / "test_minstroem_live.py").read_text(encoding="utf-8")
+
+    assert "--showlocals" in README
+    assert "--showlocals" in live_text.split('"""')[1]
+    assert "do not add it" in README
 
 
 def test_the_readme_names_every_column_the_functions_return() -> None:

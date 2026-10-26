@@ -102,11 +102,12 @@ Modules: `src/energydata/minstroem/__init__.py` (re-exports the public names),
 `src/energydata/minstroem/costs.py` (`get_consumption_costs`, `get_solar_export_revenue`) and
 `src/energydata/minstroem/prices.py` (`get_prices`, `get_forecast_prices`,
 `get_prices_with_forecast`). Tests: `tests/conftest.py` (also the `MinStroemService` mock, the
-`minstroem_address` and `minstroem_price_row` helpers, the `minstroem_service` and `live_report`
-fixtures, the live summary hook and `block_real_transports`; its no-network guard lets `live`
-tests through), `tests/minstroem_live_mock.py` (a pytest plugin, loaded with `-p`, that runs the
-live suite offline against the mock in eight scenarios of data, with the clock pinnable by
-`MINSTROEM_LIVE_NOW`),
+`minstroem_address`, `minstroem_price_row` and `minstroem_request_id` helpers, the
+`minstroem_service` and `live_report` fixtures, the live summary hook and
+`block_real_transports`; its no-network guard lets `live` tests through),
+`tests/minstroem_live_mock.py` (a pytest plugin, loaded with `-p`, that runs the live suite
+offline against the mock in nine scenarios of data, refusing real transports from
+`pytest_configure` on, with the clock pinnable by `MINSTROEM_LIVE_NOW`),
 `tests/fixtures/minstroem_openapi.json` (the published OpenAPI spec),
 `tests/test_minstroem_client.py`, `tests/test_minstroem_series.py`,
 `tests/test_minstroem_addresses.py`, `tests/test_minstroem_usage.py`,

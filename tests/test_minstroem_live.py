@@ -5,9 +5,10 @@ Every test is marked `live`, so plain `pytest` deselects them. Run them with
 summary.
 
 The output is pasted into a chat, so nothing here prints the key, an address text
-or an address id, under any traceback style (`--tb=short`, `auto`, `long`,
-`native`, `line`, `no`). The one thing that defeats it is `--showlocals` (`-l`),
-which prints every local variable, the addresses frame included: do not add it.
+or an address id, under any traceback style (`--tb=short`, `auto`, `long` and
+`native` are run offline; `line` and `no` print less). The one thing that defeats
+it is `--showlocals` (`-l`), which prints every local variable, the addresses
+frame included: do not add it.
 A failed request is reported with its status, error code, reason and request id
 and the address id replaced by `<address>`, and without the frames of the
 package, whose arguments hold the request path. The address and the id the tests
@@ -64,7 +65,7 @@ _ADDRESS_ID = re.compile(
 
 
 class _Private(str):
-    """A string that shows as `<private>`: pytest prints a `repr` for arguments and locals."""
+    """A string that shows as `<private>` where pytest prints a `repr` of it."""
 
     __slots__ = ()
 

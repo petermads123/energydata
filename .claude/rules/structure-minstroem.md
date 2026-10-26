@@ -94,68 +94,95 @@ parameters, fields, enums, the spec's own examples and error responses, the mock
 live suite's wiring (run in a subprocess), the exports, the showcases and the docs.
 
 `tests/test_minstroem_live.py` holds the live suite: every test is
-marked `live`, skipped without `MINSTROEM_API_KEY`, and plain `pytest` deselects it
-(`addopts = "-v -m 'not live'"`). It shares one module-scoped client; the address under test is
-`MINSTROEM_ADDRESS_ID` when set, else the first address with `forecastPrices`, else the first
-address; a test whose capability that address lacks is skipped naming the capability (the
+marked `live`, skipped without `MINSTROEM_API_KEY` (a blank key counts as none, as the client
+strips it), and plain `pytest` deselects it (`addopts = "-v -m 'not live'"`). It shares one
+module-scoped client; the address under test is `MINSTROEM_ADDRESS_ID` when set (matched without
+regard to case or surrounding space), else the first address with `forecastPrices`, else the
+first address; a test whose capability that address lacks is skipped naming the capability (the
 combined-series tests need both `forecastPrices` and `prices`); each test adds a `live_report`
 line, never the key, an address text or an address id. The `is_forecast` column is read with
 Series methods (`eq`, `isna`), never Python truthiness, because an hour with neither source is
-`<NA>`. Every test is wrapped by a private decorator: a failed request fails the test with an
-`AssertionError` instead, a `MinStroemError` showing its message, status, error code, reason and
-request id and a `RetryError` its message, with every address id (any UUID) replaced by
-`<address>` and the chained error suppressed, because the output is pasted into a chat. The
-package's own messages are unchanged.
+`<NA>`; "now" is floored in UTC, because a Copenhagen time cannot be floored in the repeated hour
+of the autumn change. The address-default test expects a `ValueError` for no address as well as
+for several. The combined-series cross-check makes four requests (forecast, combined, prices,
+forecast) and so does not assume one snapshot: confirmed prices are always compared, the forecast
+value for value only when it is the same before and after, else it must be made of hours one of
+the two snapshots had, and the report line says so.
+
+The output is pasted into a chat, so the suite keeps the key, an address id and the address text
+out of it under every `--tb` style; only `--showlocals` (`-l`) defeats that, and the README says
+not to add it. Every test is wrapped by a private decorator: a failed request fails the test
+with an `AssertionError` instead, a `MinStroemError` showing its message, status, error code,
+reason and request id (a UUID, kept as it is) and a `RetryError` its message, with every other
+UUID (an address id) replaced by `<address>`, the chained error suppressed and the traceback cut
+at the test's own frame, because the frames below it have the request path as an argument and
+`--tb=long` prints it. The address the tests pass around is an `_Address` (a `dict` whose `repr`
+is `<address>`) and its id and the keys are `_Private` strings (`repr` `<private>`), which is
+what pytest prints for the arguments of a frame. The package's own messages are unchanged.
 
 `tests/minstroem_live_mock.py` is a pytest plugin that runs that live suite offline:
 `pytest -p minstroem_live_mock tests/test_minstroem_live.py -m live`, with a dummy
-`MINSTROEM_API_KEY`, `tests/` and `src/` on `PYTHONPATH`, the scenario in `MINSTROEM_LIVE_MOCK`
-(`SCENARIO_ENV`; `plain` when unset) and, optionally, the clock in `MINSTROEM_LIVE_NOW`
-(`NOW_ENV`). Its `pytest_configure() -> None` hook builds that scenario's service around the
-current time and patches `MinStroemClient.__init__` so every client, whatever `transport` it was
-given, is answered by it, with instant retries unless a `policy` is passed; a missing
-`MINSTROEM_API_KEY` is a `pytest.UsageError`. `pytest_unconfigure() -> None` restores the
-constructor and the clock, and an autouse fixture calls `block_real_transports` for every test,
-so the run cannot reach the network. `MINSTROEM_LIVE_NOW` is an ISO 8601 instant with an offset
-(`2026-06-15T12:00:00+02:00`; anything else, a naive time included, is a `pytest.UsageError`):
+`MINSTROEM_API_KEY` (stripped, as the client strips it), `tests/` and `src/` on `PYTHONPATH`, the
+scenario in `MINSTROEM_LIVE_MOCK` (`SCENARIO_ENV`; `plain` when unset or empty) and, optionally,
+the clock in `MINSTROEM_LIVE_NOW` (`NOW_ENV`). Its `pytest_configure() -> None` hook builds that
+scenario's service around the current time, makes every real httpx transport refuse (before any
+fixture of any scope is set up, so the live suite's module-scoped `address` fixture is covered)
+and patches `MinStroemClient.__init__` so every client, whatever `transport` it was given, is
+answered by the mock, with instant retries unless a `policy` is passed. A missing or blank key, an
+unknown scenario (the message names `MINSTROEM_LIVE_MOCK` and the value, case and space matter) and
+a bad instant are each a `pytest.UsageError`. `pytest_unconfigure() -> None` restores the
+constructor, the clock and the transports. `MINSTROEM_LIVE_NOW` is an ISO 8601 instant with an
+offset (`2026-06-15T12:00:00+02:00`; anything else, a naive time or a date included, is a
+`pytest.UsageError`, and so is one too close to the end of the calendar to lay data out around):
 when set, the data is laid out around it and `pandas.Timestamp.now` is fixed to it, so the
 package (the confirmed-price cap, `fetched_at`) and the live tests ("today") read the instant the
 data was built for. Unset or empty, the run uses the real clock, which is fine to look at by hand
 but races an hour or local midnight passing during the run. `SCENARIOS` is `plain`, `hole`,
-`gappy_forecast`, `empty_forecast`, `no_prices`, `no_forecast`, `two_addresses` and
-`prices_not_found`; `build_service(scenario: str, now: datetime, api_key: str) ->
+`gappy_forecast`, `empty_forecast`, `no_prices`, `no_forecast`, `no_addresses`, `two_addresses`
+and `prices_not_found`; `build_service(scenario: str, now: datetime, api_key: str) ->
 MinStroemService` lays the data out around `now` (confirmed prices from local midnight three days
-back to tomorrow noon, a 48-hour forecast from the current hour) and each scenario bends it:
-`hole` drops two confirmed hours (today 01:00, yesterday 05:00) and nulls the total at today
-03:00; `gappy_forecast` ends the confirmed prices at 02:00 today and serves the forecast over
-`[current hour + 2 h, current hour + 40 h)`, missing +5 h and +6 h, with a null total in its first
-row and a null variable charge at +7 h; `empty_forecast` has no forecast rows; `no_prices` /
-`no_forecast` give the one address no `prices` / `forecastPrices`; `two_addresses` adds
+back to tomorrow noon, a 48-hour forecast from the current hour; offsets such as "02:00 today"
+are elapsed hours after local midnight, an hour off the wall clock on a daylight-saving change
+day) and each scenario bends it: `hole` drops two confirmed hours (today 01:00, yesterday 05:00)
+and nulls the total at today 03:00; `gappy_forecast` ends the confirmed prices at 02:00 today, or
+at the current hour when that is earlier, and serves the forecast over `[current hour + 2 h,
+current hour + 40 h)`, missing +5 h and +6 h, with a null total in its first row and a null
+variable charge at +7 h, so the current hour and the next have neither source at any time of day;
+`empty_forecast` has no forecast rows; `no_prices` / `no_forecast` give the one address no
+`prices` / `forecastPrices`; `no_addresses` gives the account none; `two_addresses` adds
 `SECOND_ADDRESS_ID` as a second address, the only one that can forecast; `prices_not_found`
 answers `/prices` with a 404 whose reason holds the address id. `ValueError` for an unknown
 scenario. `tests/test_minstroem_spec.py` runs the suite once per scenario in a subprocess with the
 clock pinned (`PINNED_NOW`) and asserts which tests pass or skip, where the combined series runs
-its count of hours with neither source, a report line proving the scenario's branch ran, that no
+its count of hours with neither source, a report line proving the scenario's branch ran, one
+summary line per test that reported (and, for `plain`, the exact lines at the pinned instant), that no
 key, address id or address text is in the output, and, for `prices_not_found`, that the failures
-keep their facts and lose the id. It also runs `plain` with the clock on and the day after each
-daylight-saving change, and `hole` at local midnight; builds `plain`, `hole`, `gappy_forecast`
-and `two_addresses` in process on the spring and autumn change days and an ordinary day; and
-checks that under the plugin the clock is the pinned instant (and the real one when unset), a bad
-instant is refused, a real transport is still refused and a client made without a transport is
-answered by the mock.
+keep their facts, request id included, and lose the id under every `--tb` style. It also runs the
+suite with the clock on and the day after each daylight-saving change, in each pass of the
+repeated autumn hour, at local midnight and just before one; with a padded key; and with
+`MINSTROEM_ADDRESS_ID` set to each address, in upper case, padded and unknown. And it builds
+`plain`, `hole`, `gappy_forecast` and `two_addresses` in process on the spring and autumn change
+days and an ordinary day; runs probes of the plugin (the key, scenario and instant it refuses, a
+padded key, variables left in the shell, a module-scoped fixture, a client given a real
+transport, setup and teardown in process); and checks the live suite's helpers in process (what a
+failure report keeps and removes, the traceback cut, what passes through untouched, the cross-check
+across a day-ahead publication) and that the package and the live suite read the clock only
+through `pandas.Timestamp.now`.
 
 `tests/conftest.py` carries the support, imported by the suites with `from conftest import ...`:
 `ADDRESS_ID` (the default address UUID); `minstroem_address(address_id: str = ADDRESS_ID, label:
 str = "Home", **capabilities: bool) -> dict[str, Any]` (one `/me/addresses` object, every
 capability true unless overridden); `minstroem_price_row(start: datetime, total: float | None,
 variable: float | None = 0.25) -> dict[str, Any]` (one hourly price/forecast row from an aware
-`start`; the hour is added in UTC, so a row across the autumn change is one hour); `MinStroemService(addresses: list[dict[str, Any]] | None = None, *, api_key: str =
+`start`; the hour is added in UTC, so a row across the autumn change is one hour);
+`minstroem_request_id(number: int) -> str` (the UUID the mock gives its `number`th request as
+`X-Request-ID`, as the spec types the header); `MinStroemService(addresses: list[dict[str, Any]] | None = None, *, api_key: str =
 "test-key", currency: str = "DKK")` — a mock API written independently of the package: bearer
 check (401 `invalid_token`), parameter validation (400 `invalid_parameter`, `invalid_range`),
 outward expansion to the Copenhagen calendar and caps after expansion (400 `range_too_large`:
 366 local days touched, 90 for `fifteenMinutes`, five calendar years for usage at `day` and
 above), an unknown address 404 `resource_not_found`, a capability the address lacks 422
-`feature_unavailable`, `X-Request-ID` on every response; rows served sparse from `rows[suffix]`
+`feature_unavailable`, a UUID `X-Request-ID` on every response; rows served sparse from `rows[suffix]`
 or, while `generate` is true, one per interval minus `gaps` (start texts); `forecast` the
 forecast rows; `overrides[last path segment]` answering a request in its place; every request
 kept in `requests` and read back with `calls(suffix)` (a path *ends with* `suffix`, so ask for `"/prices"`: `"prices"` also matches `forecast-prices`); `client(api_key: str | None =
@@ -165,5 +192,6 @@ every capability, generated rows), the `live_report` fixture (`live_report(line)
 and the `pytest_terminal_summary` hook printing the `MIN STRØM LIVE SUMMARY` block when any
 line was added. `block_real_transports(monkeypatch: pytest.MonkeyPatch) -> None` makes every
 real httpx transport refuse (`httpx.MockTransport` is untouched); the autouse no-network guard
-calls it for every test except one marked `live`, and the `minstroem_live_mock` plugin calls it
-for those.
+calls it for every test except one marked `live` (it is function-scoped, so a module-scoped
+fixture is set up before it), and the `minstroem_live_mock` plugin calls it from
+`pytest_configure` for those.

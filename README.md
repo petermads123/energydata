@@ -162,7 +162,9 @@ $env:MINSTROEM_API_KEY='<din-nøgle>'; .venv\Scripts\python.exe -m pytest tests/
 
 It prints a `MIN STRØM LIVE SUMMARY` block (counts, time spans, a few rounded values, never the
 key or the address) followed by one line per test; paste that back. Optionally set
-`MINSTROEM_ADDRESS_ID` to pick the address.
+`MINSTROEM_ADDRESS_ID` to pick the address (any case). The output holds no key, address id or
+address text whatever `--tb` style you use, but `-l` / `--showlocals` prints every local variable,
+the addresses included, so do not add it before pasting.
 
 ## Layout
 
