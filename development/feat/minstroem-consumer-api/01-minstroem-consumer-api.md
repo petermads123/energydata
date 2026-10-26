@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=3 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,10 +15,10 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | in progress (sent back by step 6, see section 6) |
+| 4 | Verify | `/verify` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6; re-run after step 5) |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -708,21 +708,42 @@ Edge cases considered and deliberately skipped, with reasons:
 > Written in step 6, against section 1 — not against section 2. The question is whether
 > the thing built is the thing agreed, not whether it matches the plan.
 
+First audit, by a different model from the one that planned the work, on `9b1e56d`. Audited
+against section 1 first, then the code. Run here: `ruff check .` (`All checks passed!`),
+`ruff format --check .` (91 files formatted), `mypy` (`no issues found in 56 source files`),
+plain `pytest` with no key (`2618 passed, 21 deselected`), and, to judge the live suite as
+written, the 21 live tests against the in-repo `MinStroemService` through a scratch plugin kept
+out of the repo (`liveplug/mockplug.py` in the scratchpad), under four data scenarios.
+
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | Forecast (primary goal) | yes | `prices.py:105-162` (`get_forecast_prices`), `_fetch_forecast` `prices.py:280-310`. Run against the mock: columns `total_price_per_kwh`, `variable_charges_per_kwh`, both `float64`; index `datetime64[ns, Europe/Copenhagen]` named `time`; a `null` `variableChargesPerKWh` is `NaN` with the row kept; `attrs` = `address_id`, `currency`, `vat_included`, `fetched_at` (tz-aware Copenhagen `Timestamp`). `data: []` gives an empty frame with the same columns, an empty tz-aware index and the same `attrs`. Capability false: with `address_id=None` `MinStroemError("the address has no 'forecastPrices' capability")` and no `/forecast-prices` request; with an explicit id the 422 becomes `MinStroemError` (status 422, `feature_unavailable`, request id) ending `the address lacks the 'forecastPrices' capability`. Tests: `test_minstroem_prices.py` `test_the_forecast_is_an_hourly_frame_with_gaps_and_nulls_as_nan`, `..._attrs_are_exactly_the_documented_four`, `test_an_empty_forecast_is_the_documented_empty_frame`, `test_the_forecast_capability_is_named_whichever_route_finds_it_missing`, `test_a_row_that_is_not_one_whole_hour_or_repeats_is_a_minstroem_error`. |
+| A2 | Combined series | yes | `prices.py:165-260`, `_stitch` `prices.py:313-343`. Mock with confirmed 00:00-10:00 (hole at 05:00) and forecast 08:00-14:00: 08-10 confirmed and `is_forecast=False` with the confirmed values (the forecast's 9.0 not used), 11-14 forecast `True`, the 05:00 hole `NaN` with `<NA>` (never filled from the forecast); `/prices` was asked only for `[00:00, 14:00)`. With `end` the frame is exactly `[start, end)` (18 rows, hours 15 to 17 `<NA>`); without `end` it stops at the last forecast hour; `start` beyond the forecast gives the documented empty frame. Tests: `test_confirmed_then_forecast_with_the_flag_and_confirmed_winning_the_overlap`, `test_a_confirmed_gap_before_the_last_confirmed_hour_is_not_filled_from_the_forecast`, `test_without_an_end_it_runs_to_the_last_forecast_hour`, `test_with_an_end_the_frame_is_exactly_the_period_and_the_end_hour_is_excluded`, `test_a_dst_day_is_25_or_23_confirmed_hours`, `test_a_confirmed_hour_never_follows_a_forecast_hour`. |
+| A3 | Addresses | yes | `_series._address_frame` (`_series.py:259-292`): `id`, `label`, `formatted_address`, `region`, `time_zone`, `grid_operator_name`, `supplier_name`, then six `bool` capability columns; empty frame with the same columns for `{"data": []}`. `test_minstroem_addresses.py` (49 tests, among them `test_null_fields_stay_none_not_nan`, `test_a_malformed_address_is_a_minstroem_error_without_status`). |
+| A4 | Address default | yes | `_resolve_address` (`_series.py:321-353`): `ValueError("no addresses on this account")`; several: `ValueError` listing `id (label)` for each; one lookup then the series request. `test_the_only_address_is_looked_up_once_and_used`, `test_several_addresses_are_a_value_error_listing_each_id_and_label`, `test_the_address_is_looked_up_once_for_both_requests` (combined). |
+| A5 | Series | yes | `_fetch_series` (`_series.py:514-543`) over `usage.py`, `costs.py`, `prices.py`: one row per interval of `[start, end)` from `_interval_index` (calendar stepping for day/month/year, never a fixed 24 h), absent rows `NaN`/`<NA>`, misaligned bound a `ValueError` naming it before any request (`_resolve_series_period`, `_series.py:136-160`), `currency` and `vat_included` in `attrs` for costs, revenue and prices. `test_a_zero_reading_stays_zero_and_a_missing_row_is_nan`, `test_a_dst_day_has_23_or_25_hourly_rows_and_the_right_utc_window`, `test_quarter_hours_follow_the_danish_calendar`, `test_prices_with_no_rows_are_all_nan_never_zero`. The spec contract test `test_minstroem_spec.py` ties every field, enum, path and query parameter to `tests/fixtures/minstroem_openapi.json`. |
+| A6 | Long periods | yes | `_windows` (`_series.py:192-207`) on local calendar boundaries with the `_WINDOWS` table; `test_a_period_over_the_cap_is_split_aligned_and_equals_one_unbounded_call` (13 table rows), `test_windows_end_on_calendar_boundaries_and_abut`, `test_every_window_touches_no_more_local_days_than_the_cap`, `test_usage_windows_never_touch_more_than_five_calendar_years`, `test_window_boundaries_are_local_midnights_not_elapsed_time`. The mock's caps are written independently of `_series.py` (`conftest.py:272-278`, `403-409`). |
+| A7 | Errors and key | yes | `client.py`: `_api_error` (`client.py:211-242`) fills `status`, `error_code`, `reason`, `request_id`; the key lives only in the `Authorization` header and `_key_state`; `__repr__` is `MinStroemClient(key=set\|missing)`; `MissingApiKeyError` names `MINSTROEM_API_KEY` and is raised by the first request (`_check_key`, `client.py:198-208`), construction never fails. `test_wrong_key_is_a_401_that_never_echoes_either_key`, `test_unusable_key_is_refused_at_the_first_request_and_never_echoed`, `test_missing_key_constructs_and_fails_only_at_the_first_request`, `test_the_key_is_not_in_the_repr_of_a_working_client`, `test_key_with_a_trailing_newline_is_stripped_and_works`. The section 3 deviation (`status` is `None` for payload checks that are not an API error) does not affect A7, which promises the four attributes for an API error. |
+| A8 | Tests | **partially** | Met here: plain `pytest` is green with no key (`2618 passed, 21 deselected`) and touches no network (the `_no_network` guard bites for unmarked tests, exempts only `live`); with `MINSTROEM_API_KEY` set to a dummy, plain `pytest tests/test_minstroem_live.py` still gives `21 deselected` (the `addopts` expression); `-m live` collects all 21 and, with no key, gives `21 skipped` with the reason `set MINSTROEM_API_KEY to run the live Min Strøm tests`. The README carries the exact PowerShell line (`README.md:160`, asserted by `test_minstroem_spec.py`). Against the mock the suite covers all seven endpoints: addresses, forecast (3 tests), combined series (open end, closed end, a cross-check against its two endpoints), prices hour and quarter-hour, a probe of a future `to`, consumption at all four aggregations, solar export, costs, revenue, a 400-day two-window request, the listed address id, a wrong key, an unknown address, the address default; the `MIN STRØM LIVE SUMMARY` block prints (21 lines) above one `PASSED` line per test under `-rA`. The real run is on the user's machine after step 7 and is not held against this criterion. **Unmet, code wrong:** `test_live_prices_with_forecast_open_end` crashes with `TypeError: boolean value of NA is ambiguous` (`tests/test_minstroem_live.py:171`, `flags.count(False)`) whenever the combined series holds an hour with neither source, which A2 promises as `<NA>` and the API's sparse rows make ordinary: reproduced twice against the mock, once with one confirmed hour missing at 05:00 and once with a forecast that starts after a gap (`1 failed, 20 passed`; the other 20 pass). On the user's run the combined series, the second thing A8 names, would give a traceback in place of its summary line. The fix is small and belongs to the live suite: count with the Series (`flags.eq(False).sum()`, `flags.eq(True).sum()`, `flags.isna().sum()`), not `list.count`. See the drift list. |
+| A9 | Docs | yes | README section "Min Strøm" (`README.md:111-165`): key setup (Plus, iOS app, `MINSTROEM_API_KEY`/`api_key=`), forecast example, a table of all eight functions with unit, interval, columns and endpoint, missing-is-NaN and `attrs`, the live command. `STRUCTURE.md` names every module and test file (`stop_gate.structure_problems` reports `[]`); `.claude/rules/structure-minstroem.md` has the full signature tables. `test_minstroem_spec.py` (148 passed with the gate tests after my doc edits). The structure-auditor's four gaps are applied below. |
 
 Drift found, and what was done about it:
 
+| Finding | Kind | Resolution |
+|---|---|---|
+| `test_live_prices_with_forecast_open_end` counts flags with `list.count`, which raises on `<NA>` (A8). | code (test) wrong against A8 | **Sent back to step 3.** The step 3/5 author should count with the Series, and add an offline guard so the live suite's own logic is exercised on a hole and on a gappy forecast (the scratch plugin used here is a model for it: confirmed prices from the mock minus one hour; a forecast that starts after the confirmed end). Nothing in section 1 changes. |
+| Out of scope (Enterprise API, writes, caching or vintage history, restructuring `tests/`) | none | Nothing of it built: no `thirdParty`/HMAC code, only `GET`, `fetched_at` stamped but nothing stored, `tests/` still flat with the `test_minstroem_*` prefix. |
+| Connections and surface | none | The branch diff against `main` touches no `utils` or `energidataservice` source; only `conftest.py`, `pyproject.toml`, the three rules files, `STRUCTURE.md` and `README.md` beside the new files. Public surface is the fifteen names of the concept; nothing the concept did not ask for. |
+| Showcase | none | All six `python -m energydata.minstroem.<module>` exit 0 without a key and print the one-line notice; `_series` prints its two windows and the refused month start. The with-key branches were exercised at step 4. |
+| Live-suite observations, not blocking | for the re-run, optional | (1) `test_live_prices_with_forecast_open_end` and `..._closed_end` call `get_prices_with_forecast` with an explicit id but skip only on `forecast_prices`, not on `prices`, so an address with a forecast and no `prices` would fail instead of skip; the cross-check test does skip on both. (2) `forecast["total_price_per_kwh"].dropna().map(pd.notna).all()` is always true. (3) A failing live request puts the address id in the pasted traceback through `MinStroemError`'s message (`on /me/addresses/<id>/prices`); the report lines are clean. |
+| Structure-auditor item 1: `MarketRecords` undocumented in `structure-energidataservice.md` | doc gap, predates the round | **Applied.** `type MarketRecords` exists at `tests/conftest.py:49` and is imported by `test_pricelist.py:12` and `test_dsos.py:6`. |
+| Structure-auditor item 2: the three `rules/structure-*.md` files missing from the `.claude/` table in `STRUCTURE.md` | doc gap, this round made it a third | **Applied** as one row. |
+| Structure-auditor item 3: `tests/` tree line said "one test_<module>.py per module" | stale purpose | **Applied**; `stop_gate.structure_problems` still `[]` with the `<`/`*` line. |
+| Structure-auditor item 4: `tests/fixtures/**` in the energidataservice rules `paths` also matched the Min Strøm spec | stale entry | **Applied**: `tests/fixtures/energidataservice_*.json`. |
+
 ### Earlier rounds still hold
 
-> Later rounds only. Re-check every acceptance criterion from every earlier round in this
-> folder: this round changed code they depend on, and their tests passing is necessary but
-> not sufficient — a criterion can be satisfied by tests that no longer describe what the
-> feature does.
-
-| Round | # | Criterion | Still met | Evidence |
-|---|---|---|---|---|
+First round: there are no earlier rounds to re-check.
 
 ---
 
