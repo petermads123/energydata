@@ -42,7 +42,7 @@ src/                    everything installable; nothing outside it is packaged
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
     energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
     minstroem/          Min Strøm Consumer API: client, addresses, consumption, solar export, costs, prices and price forecast
-tests/                  pytest suite, one test_<module>.py per module
+tests/                  pytest suite, one test_<module>.py per module, prefixed test_<subpackage>_ where a name would collide (test_minstroem_*.py); fixtures/ holds recorded payloads and the Min Strøm OpenAPI spec
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
 .vscode/                editor config (Ruff as formatter, format on save)
@@ -218,6 +218,7 @@ session resumes from, and what `/create-pr` builds the pull request body from.
 | — | Every skill pins `model` and `effort` in its frontmatter; the table in `CLAUDE.md` says which and why |
 | `skills/build/` | `/build` — steps 3 to 7 as one unattended block, with `models.md` holding the per-step model and effort table and its rationale: a subagent per step on its pinned model, the step's readers (`structure-auditor`, `test-designer`) run by the orchestrator and handed over in the brief, work-in-progress commits, commit and push after each, halting rules, trace relay, resume from the marker or an interrupted run |
 | `rules/python.md` | Coding conventions, auto-loaded for `**/*.py` |
+| `rules/structure-utils.md`, `rules/structure-energidataservice.md`, `rules/structure-minstroem.md` | Per-subpackage signature detail split out of this file (see Growth), each loaded by its `paths` frontmatter when Claude works in that subpackage or its tests |
 | `skills/repo-setup/` | `/repo-setup` — one-time setup of a repo made from this template; carries `main_protect.solo.json` and `main_protect.collab.json` |
 | `skills/feature/` | `/feature` — starts or resumes the pipeline |
 | `skills/fix/` | `/fix` — starts the pipeline from a defect: reproduces, finds the root cause, sizes the class, has the diagnosis criticised, decides whether it is a bug at all, then hands to `/conceptualize` as a fix round |
