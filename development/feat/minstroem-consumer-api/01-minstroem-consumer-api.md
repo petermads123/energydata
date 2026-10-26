@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,10 +15,10 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
-| 3 | Implement | `/implement` | in `/build` | in progress (sent back by step 6, see section 6) |
+| 3 | Implement | `/implement` | in `/build` | done (re-run after step 6 sent it back, see section 3) |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
-| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6; re-run after step 5) |
+| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6 sent the work back to step 3; re-run after step 5) |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -492,6 +492,102 @@ Built as planned, with these small departures:
     refused for a day interval; it now steps on the calendar (`_day`), and two live tests were
     added (the combined series cross-checked against its two endpoints; the forecast's hours).
 - No deviation touches section 1.
+
+### Re-run of step 3, sent back by step 6 (A8 partially unmet)
+
+Step 6 found `test_live_prices_with_forecast_open_end` crashing on an hour with neither source.
+Public signatures and the package are unchanged; the work is in the live suite, the test
+support and one new test-support file. Section 1 is untouched.
+
+**Red first.** Before changing the live suite, the plugin below was written, and the suite as
+step 6 left it (`b6b3b04`) was run through it, one scenario at a time (21 live tests each):
+
+```
+hole              1 failed, 20 passed
+gappy_forecast    1 failed, 20 passed
+empty_forecast    1 failed, 20 passed
+no_prices         2 failed, 14 passed, 5 skipped   (open_end and closed_end: 422 feature_unavailable)
+prices_not_found  6 failed, 15 passed              (the address id three times in the output)
+plain, no_forecast, two_addresses: green
+```
+
+The failing test, under `hole` (verbatim; the same shape under `gappy_forecast` and
+`empty_forecast`):
+
+```
+___________________ test_live_prices_with_forecast_open_end ____________________
+tests/test_minstroem_live.py:171: in test_live_prices_with_forecast_open_end
+    f"confirmed {flags.count(False)}, forecast {flags.count(True)}, "
+                 ^^^^^^^^^^^^^^^^^^
+pandas/_libs/missing.pyx:462: in pandas._libs.missing.NAType.__bool__
+    ???
+E   TypeError: boolean value of NA is ambiguous
+1 failed, 20 deselected in 0.09s
+```
+
+The new guard tests (below) against that same live file: 6 failed (`hole`, `gappy_forecast`,
+`empty_forecast`, `no_prices`, the id-leak test and the decorator test), 3 passed (`plain`,
+`two_addresses`, `no_forecast`, which show no defect).
+
+**What changed.**
+
+- `tests/test_minstroem_live.py`:
+  - `test_live_prices_with_forecast_open_end` counts with the Series
+    (`flags.eq(False).sum()`, `flags.eq(True).sum()`, `flags.isna().sum()`), asserts the three
+    counts add up to the frame, and checks "never confirmed after forecast" through a new private
+    `_hours(flags, value)` (`flags.eq(value).fillna(False)`), not a loop over `tolist()`. The
+    cross-check test used `combined.index[flags == False]`, which only worked because
+    `Index.__getitem__` turns `<NA>` into `False`; it uses `_hours` too, and its two
+    `# noqa: E712` are gone. Swept the rest of the file for Python truthiness over a
+    `boolean`-dtype value: none left (`addresses[...]` columns are plain `bool`, and the float
+    columns hold NaN, not `<NA>`).
+  - (a) the open-end and closed-end combined tests also `_need(address, "prices")`, so an address
+    with a forecast and no `prices` skips them naming the capability, as the cross-check test did.
+  - (b) `forecast[...].dropna().map(pd.notna).all()` (always true) is now `.map(math.isfinite).all()`:
+    a priced hour is a finite number.
+  - (c) every live test is wrapped by the private decorator `_anonymous_failures`: a
+    `MinStroemError` or `RetryError` fails the test with `a request failed: <type>: <message>
+    [status=... error_code=... reason=... request_id=...]`, every UUID replaced by `<address>`,
+    raised `from None` (the chained `httpx` error carries the URL) with the original frames kept.
+    Skips and ordinary assertion failures pass through. The package's messages are unchanged.
+    Two assertions that would have printed an id or a key through pytest's own introspection
+    were rewritten to assert a computed boolean: the lower-case id check, and the wrong-key test
+    (which would otherwise have printed the real key if the package ever leaked it).
+- `tests/minstroem_live_mock.py` (new, a pytest plugin, not a test file): loaded with
+  `-p minstroem_live_mock`, a dummy `MINSTROEM_API_KEY` and a scenario in `MINSTROEM_LIVE_MOCK`,
+  it replaces `MinStroemClient.__init__` so every client, whatever transport it was given, talks
+  to a `MinStroemService`, and adds an autouse fixture that keeps every real httpx transport
+  refusing. `build_service(scenario, now, api_key)` lays confirmed prices (three days back to
+  tomorrow noon) and a 48-hour forecast out from `now` and bends one thing per scenario:
+  `plain`, `hole` (two confirmed hours missing, one confirmed null total), `gappy_forecast`
+  (confirmed stop at 02:00, forecast starts two hours after the current hour, two missing hours,
+  null total first, null variable later), `empty_forecast`, `no_prices`, `no_forecast`,
+  `two_addresses` and `prices_not_found` (`/prices` 404 whose reason holds the address id).
+- `tests/conftest.py`: the guard's body is now `block_real_transports(monkeypatch)`, called by
+  `_no_network` for every test but one marked `live`, and by the plugin for those. Behaviour of
+  `_no_network` is unchanged; the guard test in `test_minstroem_spec.py` still passes.
+- `tests/test_minstroem_spec.py` (24 new tests, about 20 s because each scenario is a pytest
+  subprocess of 21 tests): the whole live suite run once per scenario, asserting the exit code,
+  all 21 outcomes from a JUnit file (every test passes, or is skipped exactly where the address
+  lacks the capability), the `neither` count of the open-ended combined series per scenario (0 for
+  tidy data, at least 1 and 2 where the data has a hole), and that no key, address id or address
+  text is in the output; the `prices_not_found` run failing exactly the six price tests with
+  status, code, reason and request id in the output and the id nowhere (and no chained-exception
+  text); every scenario having a guard; an unknown scenario a `ValueError`; the combined series
+  built from each scenario at a spring-change, autumn-change and ordinary `now`; the plugin
+  still refusing a real transport and routing a transport-less client to the mock; every live test
+  carrying the decorator. The docs test also requires `tests/minstroem_live_mock.py` in
+  `STRUCTURE.md` and the rules file.
+- `STRUCTURE.md`, `.claude/rules/structure-minstroem.md`, `.claude/rules/structure-utils.md`: the
+  plugin, `block_real_transports`, the decorator and the scenarios.
+
+**Green.** All eight scenarios through the plugin: `plain`, `hole`, `gappy_forecast`,
+`empty_forecast`, `two_addresses` 21 passed; `no_prices` 14 passed, 7 skipped; `no_forecast` 16
+passed, 5 skipped; `prices_not_found` 6 failed as designed, with the id replaced by `<address>`.
+Whole tree: `ruff check .` and `ruff format --check .` clean, `mypy` no issues in 57 files,
+`pytest` `2642 passed, 21 deselected, 1 warning` (the warning is the pandas deprecation in
+`utils/frames.py` noted at step 4); `stop_gate.structure_problems` reports nothing. Nothing in
+the offline suite reaches the network: the plugin run is refused by the guard it re-enables.
 
 ---
 
