@@ -28,6 +28,7 @@ def get_addresses(*, client: MinStroemClient | None = None) -> pd.DataFrame:
         MissingApiKeyError: If there is no API key.
         MinStroemError: If the API refuses the request or returns an address
             with a missing field or a non-boolean capability.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     with _client_scope(client) as active:

@@ -54,7 +54,7 @@ def get_consumption_costs(
     | Endpoint | `GET /me/addresses/{id}/consumption-costs` |
     | Currency | `attrs["currency"]` (`DKK`, `SEK` or `NOK`), incl. VAT (`attrs["vat_included"]` is `True`) |
     | Intervals | `hour`, `day`, `month`, `year` (Danish calendar) |
-    | Columns | `energy_kwh` (kWh), `total_price_per_kwh` (effective rate, NaN at zero energy), `fixed_fees`, `total_cost` (currency), `is_estimate` (`boolean`) |
+    | Columns | `energy_kwh` (kWh), `total_price_per_kwh` (effective rate; NaN where the API sends null, as it does at zero energy), `fixed_fees`, `total_cost` (currency), `is_estimate` (`boolean`) |
     | `attrs` | `address_id`, `aggregation`, `currency`, `vat_included` |
 
     The index is tz-aware `Europe/Copenhagen`, named `"time"`, with one row per
@@ -66,7 +66,10 @@ def get_consumption_costs(
             naive value is read as Danish local time.
         end: First moment after the period (exclusive). `None` means the whole
             local day when `start` is a date, or one hour when it is a
-            timestamp.
+            timestamp, so with `aggregation` `"day"`, `"month"` or `"year"` a
+            lone timestamp is refused (its derived `end` is not on the
+            interval), and a lone date is one `"day"` but never a `"month"` or
+            `"year"`.
         aggregation: The interval: `"hour"`, `"day"`, `"month"` or `"year"`.
         address_id: The address (a UUID). `None` uses the account's only
             address.
@@ -84,6 +87,7 @@ def get_consumption_costs(
         MinStroemError: If the API refuses a request, returns an unexpected
             payload or windows disagree on currency, or the address lacks the
             `consumptionCosts` capability.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     return _fetch_series(
@@ -111,7 +115,10 @@ def get_solar_export_revenue(
             naive value is read as Danish local time.
         end: First moment after the period (exclusive). `None` means the whole
             local day when `start` is a date, or one hour when it is a
-            timestamp.
+            timestamp, so with `aggregation` `"day"`, `"month"` or `"year"` a
+            lone timestamp is refused (its derived `end` is not on the
+            interval), and a lone date is one `"day"` but never a `"month"` or
+            `"year"`.
         aggregation: The interval: `"hour"`, `"day"`, `"month"` or `"year"`.
         address_id: The address (a UUID). `None` uses the account's only
             address.
@@ -127,6 +134,7 @@ def get_solar_export_revenue(
         MissingApiKeyError: If there is no API key.
         MinStroemError: As for `get_consumption_costs`, for
             `solarExportRevenue`.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     return _fetch_series(

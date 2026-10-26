@@ -98,11 +98,24 @@ class _Parsed:
 
 @dataclass(frozen=True)
 class _Fetched:
-    """The frame of a whole period and the currency and VAT flag it came with."""
+    """The frame of a whole period and the currency and VAT flag it came with.
+
+    `starts` are the starts of the rows the API returned (a row of nulls counts),
+    which the frame alone cannot show: a missing row and a row of nulls are both NaN.
+    """
 
     frame: pd.DataFrame
     currency: str | None
     vat_included: bool | None
+    starts: pd.DatetimeIndex
+
+
+@dataclass(frozen=True)
+class _Address:
+    """The address a call works on, and what the lookup showed it lacks."""
+
+    id: str
+    lacks: frozenset[str]
 
 
 def _check_interval(value: str, allowed: Sequence[str], name: str) -> None:
@@ -284,16 +297,39 @@ async def _addresses(client: MinStroemClient) -> pd.DataFrame:
     return _address_frame(await client.fetch_json("/me/addresses"))
 
 
+def _require(address: _Address, capability: str) -> None:
+    """Raise `MinStroemError` if the lookup showed `address` lacks `capability`."""
+    if capability in address.lacks:
+        raise MinStroemError(f"the address has no {capability!r} capability")
+
+
+def _server_address_id(value: str) -> str:
+    """The id of a looked-up address if it is a UUID, else `MinStroemError`.
+
+    It goes into a request path, so a value that is not the hyphenated UUID form
+    is refused rather than trusted because the server sent it.
+    """
+    try:
+        canonical = str(uuid.UUID(value))
+    except ValueError:
+        canonical = ""
+    if canonical != value.lower():
+        raise MinStroemError(f"/me/addresses: the address id is not a UUID: {value!r}")
+    return value
+
+
 async def _resolve_address(
     client: MinStroemClient, address_id: str | None, capability: str
-) -> str:
+) -> _Address:
     """The address to use: the given id, else the account's only address.
 
     With no id the addresses are looked up, and the address's `capability` flag
-    is checked before the endpoint is requested.
+    is checked before the endpoint is requested. The result also holds the
+    capabilities the lookup showed missing, for a function that requests a
+    second endpoint.
     """
     if address_id is not None:
-        return _check_address_id(address_id)
+        return _Address(_check_address_id(address_id), frozenset())
     frame = await _addresses(client)
     if frame.empty:
         raise ValueError("no addresses on this account")
@@ -305,10 +341,16 @@ async def _resolve_address(
             f"the account has {len(frame)} addresses, pass address_id= one of: "
             f"{listing}"
         )
-    column = next(name for name, source in _CAPABILITY_COLUMNS if source == capability)
-    if not bool(frame[column].iloc[0]):
-        raise MinStroemError(f"the address has no {capability!r} capability")
-    return str(frame["id"].iloc[0])
+    found = _Address(
+        _server_address_id(str(frame["id"].iloc[0])),
+        frozenset(
+            source
+            for column, source in _CAPABILITY_COLUMNS
+            if not bool(frame[column].iloc[0])
+        ),
+    )
+    _require(found, capability)
+    return found
 
 
 def _timestamp(value: object, what: str) -> pd.Timestamp:
@@ -317,11 +359,11 @@ def _timestamp(value: object, what: str) -> pd.Timestamp:
         raise MinStroemError(f"{what} is missing or not text")
     try:
         stamp = pd.Timestamp(value)
-    except ValueError as exc:
-        raise MinStroemError(f"{what} is not a timestamp: {value!r}") from exc
-    if stamp.tzinfo is None:
-        raise MinStroemError(f"{what} has no UTC offset: {value!r}")
-    return stamp.tz_convert(DANISH_TZ).as_unit("ns")
+        if stamp.tzinfo is None:
+            raise MinStroemError(f"{what} has no UTC offset: {value!r}")
+        return stamp.tz_convert(DANISH_TZ).as_unit("ns")
+    except (ValueError, OverflowError) as exc:
+        raise MinStroemError(f"{what} is not a usable timestamp: {value!r}") from exc
 
 
 def _number(value: object, field: _Field, what: str) -> float:
@@ -330,7 +372,15 @@ def _number(value: object, field: _Field, what: str) -> float:
         return math.nan
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise MinStroemError(f"{what}: '{field.source}' is not a number, got {value!r}")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise MinStroemError(f"{what}: '{field.source}' is too large") from exc
+    if not math.isfinite(number):
+        raise MinStroemError(
+            f"{what}: '{field.source}' is not a finite number, got {value!r}"
+        )
+    return number
 
 
 def _parse(endpoint: _Endpoint, payload: dict[str, JsonValue], label: str) -> _Parsed:
@@ -453,7 +503,12 @@ async def _fetch_windows(
         if lo <= row.start < hi
     ]
     frame = _build(endpoint.fields, rows, _interval_index(first, last, interval))
-    return _Fetched(frame, currency, vat_included)
+    starts = (
+        pd.DatetimeIndex([row.start for row in rows]).as_unit("ns")
+        if rows
+        else _empty_index()
+    )
+    return _Fetched(frame, currency, vat_included, starts)
 
 
 def _fetch_series(
@@ -473,8 +528,8 @@ def _fetch_series(
         active: MinStroemClient,
     ) -> tuple[str, _Fetched]:
         address = await _resolve_address(active, wanted, endpoint.capability)
-        return address, await _fetch_windows(
-            active, endpoint, address, interval, first, last
+        return address.id, await _fetch_windows(
+            active, endpoint, address.id, interval, first, last
         )
 
     with _client_scope(client) as active:

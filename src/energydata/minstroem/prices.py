@@ -21,6 +21,7 @@ from ._series import (
     _Fetched,
     _Field,
     _parse,
+    _require,
     _resolve_address,
 )
 from .client import MinStroemClient, MinStroemError, _showcase_has_key
@@ -95,6 +96,7 @@ def get_prices(
         MissingApiKeyError: If there is no API key.
         MinStroemError: If the API refuses a request or returns an unexpected
             payload, or the address lacks the `prices` capability.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     return _fetch_series(_PRICES, start, end, resolution, address_id, client)
@@ -139,13 +141,14 @@ def get_forecast_prices(
         MinStroemError: If the API refuses the request (a 422
             `feature_unavailable` names the `forecastPrices` capability),
             returns an unexpected payload, or the address lacks the capability.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     wanted = address_id if address_id is None else _check_address_id(address_id)
 
     async def work(active: MinStroemClient) -> tuple[str, _Forecast]:
         address = await _resolve_address(active, wanted, "forecastPrices")
-        return address, await _fetch_forecast(active, address)
+        return address.id, await _fetch_forecast(active, address.id)
 
     with _client_scope(client) as active:
         address, forecast = active.run(lambda: work(active))
@@ -175,10 +178,11 @@ def get_prices_with_forecast(
     | Columns | `total_price_per_kwh`, `variable_charges_per_kwh` (float), `is_forecast` (`boolean`) |
     | `attrs` | `address_id`, `currency`, `vat_included`, `fetched_at` |
 
-    An hour is confirmed when its confirmed total price is not NaN. Confirmed
-    prices win: forecast values are used only for hours after the last
-    confirmed hour, and `is_forecast` is `True` there, `False` for confirmed
-    hours and `<NA>` for an hour with neither (its prices NaN). With `end` the
+    An hour is confirmed when the API returned a confirmed row for it, even a
+    row whose prices are null. Confirmed prices win: forecast values are used
+    only for hours after the last confirmed hour, and `is_forecast` is `True`
+    for an hour with a forecast row there, `False` for confirmed hours and
+    `<NA>` for an hour with neither (its prices NaN). With `end` the
     frame covers exactly `[start, end)` hourly; without it, it runs to the last
     forecast hour (to local midnight two days ahead when the forecast is
     empty). Confirmed prices are never requested beyond local midnight two days
@@ -190,7 +194,8 @@ def get_prices_with_forecast(
         end: First moment after the period (exclusive), or `None` to run to the
             end of the forecast.
         address_id: The address (a UUID). `None` uses the account's only
-            address, and refuses one without the `forecastPrices` capability.
+            address, and refuses one without the `forecastPrices` capability,
+            or without `prices` when confirmed prices are to be requested.
         client: A client to fetch with. `None` creates one and closes it before
             returning; a passed client is left open.
 
@@ -203,8 +208,10 @@ def get_prices_with_forecast(
             several.
         MissingApiKeyError: If there is no API key.
         MinStroemError: If the API refuses a request, a payload is unexpected,
-            the address lacks the forecast capability, or the two sources
-            disagree on currency or VAT.
+            the address lacks the `forecastPrices` capability or, when
+            confirmed prices are requested, the `prices` capability, or the two
+            sources disagree on currency or VAT.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     first, resolved_end = resolve_period(start, end, resolution=_HOUR)
@@ -216,7 +223,7 @@ def get_prices_with_forecast(
         active: MinStroemClient,
     ) -> tuple[str, _Forecast, pd.Timestamp, _Fetched | None]:
         address = await _resolve_address(active, wanted, "forecastPrices")
-        forecast = await _fetch_forecast(active, address)
+        forecast = await _fetch_forecast(active, address.id)
         if stop is not None:
             frame_end = stop
         elif len(forecast.hours):
@@ -226,10 +233,11 @@ def get_prices_with_forecast(
         confirmed_end = min(frame_end, cap)
         confirmed: _Fetched | None = None
         if frame_end > first and confirmed_end > first:
+            _require(address, "prices")
             confirmed = await _fetch_windows(
-                active, _PRICES, address, "hour", first, confirmed_end
+                active, _PRICES, address.id, "hour", first, confirmed_end
             )
-        return address, forecast, frame_end, confirmed
+        return address.id, forecast, frame_end, confirmed
 
     with _client_scope(client) as active:
         address, forecast, frame_end, confirmed = active.run(lambda: work(active))
@@ -318,7 +326,7 @@ def _stitch(
         confirmed_values = forecast_values.where(is_confirmed)
     else:
         confirmed_values = confirmed.frame.reindex(index)
-        is_confirmed = confirmed_values["total_price_per_kwh"].notna()
+        is_confirmed = pd.Series(index.isin(confirmed.starts), index=index)
     from_forecast = index.isin(forecast.hours)
     if is_confirmed.any():
         last_confirmed = index[is_confirmed.to_numpy()].max()

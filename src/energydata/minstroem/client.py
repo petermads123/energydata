@@ -190,6 +190,7 @@ class MinStroemClient(ApiClient):
         Raises:
             MissingApiKeyError: If the client has no key.
             MinStroemError: As for `fetch_json`.
+            RetriesExhaustedError: If a transport failure outlasted the retries.
             RuntimeError: If the client is closed.
         """
         return self.run(lambda: self.fetch_json(path, params))

@@ -47,7 +47,10 @@ def get_consumption(
             naive value is read as Danish local time.
         end: First moment after the period (exclusive). `None` means the whole
             local day when `start` is a date, or one hour when it is a
-            timestamp.
+            timestamp, so with `aggregation` `"day"`, `"month"` or `"year"` a
+            lone timestamp is refused (its derived `end` is not on the
+            interval), and a lone date is one `"day"` but never a `"month"` or
+            `"year"`.
         aggregation: The interval: `"hour"`, `"day"`, `"month"` or `"year"`.
         address_id: The address (a UUID). `None` uses the account's only
             address.
@@ -65,6 +68,7 @@ def get_consumption(
         MissingApiKeyError: If there is no API key.
         MinStroemError: If the API refuses a request or returns an unexpected
             payload, or the address lacks the `consumption` capability.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     return _fetch_series(_CONSUMPTION, start, end, aggregation, address_id, client)
@@ -89,7 +93,10 @@ def get_solar_export(
             naive value is read as Danish local time.
         end: First moment after the period (exclusive). `None` means the whole
             local day when `start` is a date, or one hour when it is a
-            timestamp.
+            timestamp, so with `aggregation` `"day"`, `"month"` or `"year"` a
+            lone timestamp is refused (its derived `end` is not on the
+            interval), and a lone date is one `"day"` but never a `"month"` or
+            `"year"`.
         aggregation: The interval: `"hour"`, `"day"`, `"month"` or `"year"`.
         address_id: The address (a UUID). `None` uses the account's only
             address.
@@ -103,6 +110,7 @@ def get_solar_export(
         ValueError: As for `get_consumption`.
         MissingApiKeyError: If there is no API key.
         MinStroemError: As for `get_consumption`, for `solarExport`.
+        RetriesExhaustedError: If a network failure outlasted the retries.
         RuntimeError: If a passed `client` is closed.
     """
     return _fetch_series(_SOLAR_EXPORT, start, end, aggregation, address_id, client)
