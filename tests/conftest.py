@@ -1,4 +1,5 @@
 import json
+import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -41,6 +42,8 @@ def _no_network(
     """Make every real httpx transport refuse, so no test can reach the network.
 
     A test marked `live` is the one exception: it exists to call the real API.
+    The guard is function-scoped, so a module- or session-scoped fixture is set up
+    before it runs and is not covered; no offline fixture here builds a transport.
     """
     if request.node.get_closest_marker("live") is not None:
         return
@@ -239,6 +242,15 @@ def minstroem_price_row(
     }
 
 
+def minstroem_request_id(number: int) -> str:
+    """The `X-Request-ID` the mock gives its `number`th request.
+
+    A UUID, as the spec types the header (`format: uuid`): a test that handles
+    request ids must meet the shape the real API sends, not a friendlier one.
+    """
+    return str(uuid.UUID(int=number, version=4))
+
+
 def _floor(instant: datetime, interval: str) -> datetime:
     """Round a UTC instant down to the start of its Copenhagen-calendar interval."""
     local = instant.astimezone(_COPENHAGEN)
@@ -296,9 +308,9 @@ class MinStroemService:
     local calendar days touched (a partial day counts) for hourly usage, costs,
     revenue and hourly prices, 90 for `fifteenMinutes`, at most 5 calendar years
     for usage at `day` and above; an unknown address is a 404, a capability the
-    address lacks a 422 `feature_unavailable`. Every response carries
-    `X-Request-ID`. Written independently of the package so the tests mean
-    something.
+    address lacks a 422 `feature_unavailable`. Every response carries an
+    `X-Request-ID`, a UUID that counts the requests (`minstroem_request_id`).
+    Written independently of the package so the tests mean something.
 
     Rows are served sparse: either `rows[suffix]` (a list of API-shaped row
     dicts, filtered to the expanded period), or, when `generate` is true and
@@ -351,7 +363,7 @@ class MinStroemService:
         """Answer one request."""
         self.requests.append(request)
         response = self._answer(request)
-        response.headers["X-Request-ID"] = f"req-{len(self.requests)}"
+        response.headers["X-Request-ID"] = minstroem_request_id(len(self.requests))
         return response
 
     @staticmethod

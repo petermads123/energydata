@@ -5,7 +5,12 @@ from typing import Any
 
 import httpx
 import pytest
-from conftest import ADDRESS_ID, MinStroemService, minstroem_address
+from conftest import (
+    ADDRESS_ID,
+    MinStroemService,
+    minstroem_address,
+    minstroem_request_id,
+)
 
 from energydata.minstroem import (
     API_KEY_ENV,
@@ -354,12 +359,12 @@ def test_error_response_maps_to_all_four_attributes_and_chains_the_http_error(
     error = caught.value
     assert str(error) == (
         f"Min Strøm API: HTTP 404 resource_not_found on {path}: No such address. "
-        "(request id req-1)"
+        f"(request id {minstroem_request_id(1)})"
     )
     assert error.status == 404
     assert error.error_code == "resource_not_found"
     assert error.reason == "No such address."
-    assert error.request_id == "req-1"
+    assert error.request_id == minstroem_request_id(1)
     assert isinstance(error.__cause__, httpx.HTTPStatusError)
     assert len(minstroem_service.requests) == 1
 
@@ -390,7 +395,7 @@ def test_each_documented_client_error_maps_and_is_not_retried(
     error = caught.value
     assert (error.status, error.error_code) == (status, code)
     assert error.reason == "because æøå"
-    assert error.request_id == "req-1"
+    assert error.request_id == minstroem_request_id(1)
     assert "because æøå" in str(error)
     assert len(minstroem_service.requests) == 1
 
@@ -416,7 +421,7 @@ def test_exhausted_retries_carry_the_last_response(
 
     error = caught.value
     assert (error.status, error.error_code, error.reason) == (status, code, "down")
-    assert error.request_id == "req-5"
+    assert error.request_id == minstroem_request_id(5)
     assert len(minstroem_service.requests) == 5
     assert isinstance(error.__cause__, RetriesExhaustedError)
 
@@ -434,7 +439,7 @@ def test_a_retry_after_beyond_the_holdoff_cap_is_an_error_after_one_request(
 
     error = caught.value
     assert (error.status, error.error_code) == (429, "rate_limited")
-    assert error.request_id == "req-1"
+    assert error.request_id == minstroem_request_id(1)
     assert len(minstroem_service.requests) == 1
     assert isinstance(error.__cause__, HoldoffTooLongError)
 
@@ -506,8 +511,11 @@ def test_an_undocumented_error_body_leaves_code_and_reason_none(
     assert error.status == 400
     assert error.error_code is None
     assert error.reason is None
-    assert error.request_id == "req-1"
-    assert str(error) == "Min Strøm API: HTTP 400 on /me/addresses (request id req-1)"
+    assert error.request_id == minstroem_request_id(1)
+    assert str(error) == (
+        "Min Strøm API: HTTP 400 on /me/addresses "
+        f"(request id {minstroem_request_id(1)})"
+    )
 
 
 def test_a_non_json_body_after_exhausted_retries_keeps_status_and_request_id(
@@ -520,7 +528,7 @@ def test_a_non_json_body_after_exhausted_retries_keeps_status_and_request_id(
 
     error = caught.value
     assert (error.status, error.error_code, error.reason) == (502, None, None)
-    assert error.request_id == "req-5"
+    assert error.request_id == minstroem_request_id(5)
 
 
 def test_error_without_a_request_id_header_has_none_and_no_id_in_the_message() -> None:

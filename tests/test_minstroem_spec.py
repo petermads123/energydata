@@ -10,17 +10,21 @@ import sys
 import types
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 from zoneinfo import ZoneInfo
 
+import conftest
 import httpx
+import minstroem_live_mock as live_mock
 import pandas as pd
 import pytest
+import test_minstroem_live as live_suite
 from conftest import ADDRESS_ID, MinStroemService, minstroem_price_row
 from minstroem_live_mock import (
     NOW_ENV,
+    SCENARIO_ENV,
     SCENARIOS,
     SECOND_ADDRESS_ID,
     build_service,
@@ -46,6 +50,7 @@ from energydata.minstroem import (
     prices,
     usage,
 )
+from energydata.utils import RetriesExhaustedError, RetryPolicy
 
 REPO = Path(__file__).resolve().parents[1]
 SPEC: dict[str, Any] = json.loads(
@@ -674,8 +679,8 @@ def test_every_documented_error_example_becomes_a_minstroem_error(
     assert error.status == status
     assert error.error_code == example["errorCode"]
     assert error.reason == example["reason"]
-    assert error.request_id is not None
-    assert error.request_id.startswith("req-")
+    # A retried status ends on the last of its requests.
+    assert error.request_id == conftest.minstroem_request_id(len(service.requests))
     assert example["reason"] in str(error)
 
 
@@ -685,11 +690,23 @@ def test_every_documented_error_example_becomes_a_minstroem_error(
 def _pytest(
     args: list[str], *, env: Mapping[str, str] | None = None, cwd: Path = REPO
 ) -> subprocess.CompletedProcess[str]:
-    """Run pytest in a fresh process, never inheriting a Min Strøm key."""
+    """Run pytest in a fresh process, inheriting nothing of a Min Strøm setup.
+
+    A key, an address, the plugin's scenario and clock, and `PYTEST_ADDOPTS` a
+    developer exported in the shell for a hand run must not reach a probe that
+    expects them unset.
+    """
     base = {
         k: v
         for k, v in os.environ.items()
-        if k not in (API_KEY_ENV, "MINSTROEM_ADDRESS_ID", "PYTEST_ADDOPTS")
+        if k
+        not in (
+            API_KEY_ENV,
+            "MINSTROEM_ADDRESS_ID",
+            "PYTEST_ADDOPTS",
+            SCENARIO_ENV,
+            NOW_ENV,
+        )
     }
     base.update(PYTHONIOENCODING="utf-8", PYTHONPATH=f"{REPO / 'src'}")
     base.update(env or {})
@@ -706,6 +723,7 @@ def _pytest(
 
 
 FAKE_KEY = {API_KEY_ENV: "fake-key-that-is-never-sent"}
+UUID_TEXT = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
 def test_plain_pytest_deselects_the_live_tests_even_with_a_key_set() -> None:
@@ -873,6 +891,23 @@ NEEDS_FORECAST = {
     "test_live_forecast_hours_are_whole_local_hours_and_unique",
 }
 
+# Every test that needs an address: all but the shape of the listing, the wrong key,
+# the unknown address and the address default, which are about the account itself.
+NEEDS_ADDRESS = (
+    NEEDS_PRICES
+    | NEEDS_FORECAST
+    | {
+        "test_live_consumption[hour]",
+        "test_live_consumption[day]",
+        "test_live_consumption[month]",
+        "test_live_consumption[year]",
+        "test_live_solar_export",
+        "test_live_consumption_costs",
+        "test_live_solar_export_revenue",
+        "test_live_hourly_consumption_over_two_windows",
+    }
+)
+
 # Hours of the open-ended combined series with neither a confirmed nor a forecast
 # row, as (least, most): <NA> in `is_forecast`, never filled from the other source.
 EXPECTED_NEITHER: dict[str, tuple[int, int]] = {
@@ -889,8 +924,19 @@ class _LiveRun(NamedTuple):
     outcomes: dict[str, str]  # test name -> passed, failure, error or skipped
 
 
-def _run_live_suite(scenario: str, tmp_path: Path, now: str = PINNED_NOW) -> _LiveRun:
-    """Run the whole live suite against the mock for `scenario` at the instant `now`."""
+def _run_live_suite(
+    scenario: str,
+    tmp_path: Path,
+    now: str = PINNED_NOW,
+    *,
+    tb: str = "short",
+    env: Mapping[str, str] | None = None,
+) -> _LiveRun:
+    """Run the whole live suite against the mock for `scenario` at the instant `now`.
+
+    `tb` is pytest's traceback style and `env` what the user's shell would add
+    (a different key, `MINSTROEM_ADDRESS_ID`).
+    """
     report = tmp_path / "live.xml"
     result = _pytest(
         [
@@ -900,14 +946,15 @@ def _run_live_suite(scenario: str, tmp_path: Path, now: str = PINNED_NOW) -> _Li
             "-m",
             "live",
             "-rA",
-            "--tb=short",
+            f"--tb={tb}",
             f"--junitxml={report}",
         ],
         env={
             API_KEY_ENV: DUMMY_KEY,
-            "MINSTROEM_LIVE_MOCK": scenario,
+            SCENARIO_ENV: scenario,
             NOW_ENV: now,
             "PYTHONPATH": f"{REPO / 'tests'}{os.pathsep}{REPO / 'src'}",
+            **(env or {}),
         },
     )
     assert report.exists(), result.stdout + result.stderr
@@ -938,6 +985,7 @@ PASSING_SCENARIOS: list[tuple[str, set[str], str]] = [
         NEEDS_FORECAST,
         "address default: one address without forecast capability",
     ),
+    ("no_addresses", NEEDS_ADDRESS, "address default: 0 addresses, ValueError"),
 ]
 FAILING_SCENARIO = "prices_not_found"
 
@@ -985,9 +1033,15 @@ def test_a_failed_live_request_reports_its_facts_but_never_the_address_id(
         "status=404",
         "error_code=resource_not_found",
         "reason='No prices for address <address>.'",
-        "request_id=req-",
     ):
         assert kept in output, kept
+    # The request id is a UUID too (the spec's header is), and it is the one fact
+    # support asks for: it must not be erased as if it were the address.
+    request_ids = re.findall(r"request_id=([^\s\]]+)", output)
+    assert request_ids, output
+    assert all(re.fullmatch(UUID_TEXT, found) for found in request_ids), request_ids
+    assert re.search(rf"\(request id {UUID_TEXT}\)", output)
+    assert "request id <address>" not in output
     assert ADDRESS_ID not in output.lower()
     assert DUMMY_KEY not in output
     assert "direct cause" not in output
@@ -1090,6 +1144,14 @@ PINNED_INSTANTS = [
     pytest.param("plain", "2026-10-25T12:00:00+01:00", id="autumn-change-day"),
     pytest.param("plain", "2026-10-26T12:00:00+01:00", id="day-after-autumn-change"),
     pytest.param("hole", "2026-10-27T00:00:00+01:00", id="hole-at-local-midnight"),
+    # The autumn change repeats 02:00-03:00 local: the first pass is +02:00, the
+    # second +01:00. `floor("h")` on a Copenhagen time raises in both.
+    pytest.param("plain", "2026-10-25T02:30:00+02:00", id="repeated-hour-first"),
+    pytest.param("plain", "2026-10-25T02:30:00+01:00", id="repeated-hour-second"),
+    pytest.param("plain", "2026-10-25T02:00:00+01:00", id="repeated-hour-on-the-hour"),
+    # Local [00:00, 01:00): the forecast used to start where the confirmed prices stop.
+    pytest.param("gappy_forecast", "2026-06-15T00:00:00+02:00", id="gappy-at-midnight"),
+    pytest.param("gappy_forecast", "2026-06-15T00:59:00+02:00", id="gappy-before-one"),
 ]
 
 
@@ -1266,6 +1328,752 @@ def test_every_live_test_is_marked_live_and_skipped_without_a_key() -> None:
     assert "pytest.mark.live" in text
     assert "skipif" in text
     assert "API_KEY_ENV" in text
+
+
+# === the live suite's offline guard, second pass ================================
+#
+# The first pass (above) runs the whole live suite under every shape of data. This
+# one pins what reading the suite the way the user's run meets it turned up: the
+# clock in the repeated autumn hour, the key and the environment the plugin reads,
+# the failure report, the address the user picks, and the shape of the cross-check.
+
+ONE_ADDRESS_PROBE = """
+import pytest
+
+from energydata.minstroem import get_addresses
+
+
+@pytest.mark.live
+def test_the_default_scenario_has_one_address():
+    assert len(get_addresses()) == 1
+"""
+
+TRIVIAL_PROBE = """
+import pytest
+
+
+@pytest.mark.live
+def test_nothing():
+    pass
+"""
+
+PLUGIN_ENV = {API_KEY_ENV: DUMMY_KEY, NOW_ENV: PINNED_NOW}
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["  dummy-key  ", "dummy-key\n", "\tdummy-key"],
+    ids=["spaces", "newline", "tab"],
+)
+def test_the_plugin_accepts_a_padded_key_the_way_the_client_strips_it(
+    tmp_path: Path, key: str
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        ONE_ADDRESS_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={**PLUGIN_ENV, API_KEY_ENV: key},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "key", [None, "", "   ", "\n"], ids=["unset", "empty", "blank", "newline"]
+)
+def test_the_plugin_refuses_a_missing_or_blank_key(
+    tmp_path: Path, key: str | None
+) -> None:
+    env = (
+        {NOW_ENV: PINNED_NOW}
+        if key is None
+        else {NOW_ENV: PINNED_NOW, API_KEY_ENV: key}
+    )
+
+    result = _guard_project(tmp_path, TRIVIAL_PROBE, plugins=(LIVE_PLUGIN,), env=env)
+
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, result.stdout
+    assert f"minstroem_live_mock needs a dummy {API_KEY_ENV}" in result.stderr
+    assert "passed" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["sunny", "Plain", " plain", "plain "],
+    ids=["unknown", "capitalised", "leading-space", "trailing-space"],
+)
+def test_a_scenario_that_does_not_exist_is_a_usage_error_naming_the_variable(
+    tmp_path: Path, raw: str
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        TRIVIAL_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={**PLUGIN_ENV, SCENARIO_ENV: raw},
+    )
+
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, result.stdout
+    assert SCENARIO_ENV in result.stderr
+    assert repr(raw) in result.stderr
+    assert "INTERNALERROR" not in result.stdout + result.stderr
+
+
+def test_an_empty_scenario_variable_means_the_default_scenario(
+    tmp_path: Path,
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        ONE_ADDRESS_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={**PLUGIN_ENV, SCENARIO_ENV: ""},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_probes_do_not_inherit_plugin_variables_left_in_the_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A developer who exported both for a hand run, as the docs say, must still see
+    # the probes that expect them unset behave as if they were.
+    monkeypatch.setenv(NOW_ENV, "2001-01-01T00:00:00+00:00")
+    monkeypatch.setenv(SCENARIO_ENV, "two_addresses")
+
+    real_clock = _guard_project(
+        tmp_path,
+        REAL_CLOCK_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY},
+    )
+    default_data = _guard_project(
+        tmp_path,
+        ONE_ADDRESS_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY},
+    )
+
+    assert real_clock.returncode == 0, real_clock.stdout + real_clock.stderr
+    assert default_data.returncode == 0, default_data.stdout + default_data.stderr
+
+
+def test_a_pinned_instant_the_data_cannot_be_laid_out_around_is_a_usage_error(
+    tmp_path: Path,
+) -> None:
+    raw = "9999-12-31T23:00:00+00:00"
+
+    result = _guard_project(
+        tmp_path,
+        TRIVIAL_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY, NOW_ENV: raw},
+    )
+
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR, result.stdout
+    assert NOW_ENV in result.stderr
+    assert repr(raw) in result.stderr
+    assert "INTERNALERROR" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2026-06-15T10:00:00Z", datetime(2026, 6, 15, 10, tzinfo=UTC)),
+        ("2026-06-15T15:45:00+05:45", datetime(2026, 6, 15, 10, tzinfo=UTC)),
+        ("2026-06-15T12:00:00+02:00", datetime(2026, 6, 15, 10, tzinfo=UTC)),
+        (
+            "2026-06-15T12:00:00.25+02:00",
+            datetime(2026, 6, 15, 10, 0, 0, 250000, tzinfo=UTC),
+        ),
+    ],
+    ids=["z", "odd-offset", "copenhagen-summer", "fraction"],
+)
+def test_a_pinned_instant_is_read_in_any_offset_form_and_becomes_utc(
+    raw: str, expected: datetime
+) -> None:
+    pinned = live_mock._pinned_now(raw)
+
+    assert pinned == expected
+    assert pinned is not None
+    assert pinned.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize(
+    "raw", ["2026-06-15", "2026-06-15T12:00:00+02:00\n"], ids=["bare-date", "newline"]
+)
+def test_a_pinned_instant_that_is_a_bare_date_or_has_trailing_text_is_refused(
+    raw: str,
+) -> None:
+    with pytest.raises(pytest.UsageError, match=NOW_ENV):
+        live_mock._pinned_now(raw)
+
+
+@pytest.mark.parametrize("cycles", [1, 2])
+def test_unconfiguring_the_plugin_restores_the_client_the_clock_and_the_transports(
+    monkeypatch: pytest.MonkeyPatch, cycles: int
+) -> None:
+    monkeypatch.setenv(API_KEY_ENV, DUMMY_KEY)
+    monkeypatch.setenv(NOW_ENV, PINNED_NOW)
+    monkeypatch.delenv(SCENARIO_ENV, raising=False)
+    init = MinStroemClient.__dict__["__init__"]
+    clock = pd.Timestamp.__dict__["now"]
+    asynchronous = httpx.AsyncHTTPTransport.__dict__["handle_async_request"]
+    synchronous = httpx.HTTPTransport.__dict__["handle_request"]
+
+    for _ in range(cycles):
+        live_mock.pytest_configure()
+        try:
+            assert pd.Timestamp.now(tz="UTC") == pd.Timestamp("2026-06-15T10:00:00Z")
+            with MinStroemClient() as client:
+                assert len(get_addresses(client=client)) == 1
+        finally:
+            live_mock.pytest_unconfigure()
+
+    assert MinStroemClient.__dict__["__init__"] is init
+    assert pd.Timestamp.__dict__["now"] is clock
+    assert httpx.AsyncHTTPTransport.__dict__["handle_async_request"] is asynchronous
+    assert httpx.HTTPTransport.__dict__["handle_request"] is synchronous
+    real = pd.Timestamp(datetime.now(UTC))
+    assert abs(pd.Timestamp.now(tz="UTC") - real) < pd.Timedelta("1min")
+
+
+@pytest.mark.parametrize(
+    "local", ["00:00", "00:30", "00:59", "01:00", "12:00", "23:30"]
+)
+def test_the_gappy_forecast_starts_after_a_gap_at_any_time_of_day(local: str) -> None:
+    # Confirmed prices used to stop at a fixed 02:00 while the forecast started two
+    # hours after the current hour, so in local [00:00, 01:00) the gap vanished.
+    now = datetime.fromisoformat(f"2026-06-15T{local}:00+02:00")
+
+    service = build_service("gappy_forecast", now, "test-key")
+
+    confirmed_ends = max(row["end"] for row in service.rows["prices"])
+    forecast_starts = min(row["start"] for row in service.forecast)
+    # The API's time text sorts in time order.
+    assert forecast_starts > confirmed_ends
+
+
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 6, 15, 12, 15, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+        datetime(2026, 6, 15, 9, 59, 59, 999999, tzinfo=UTC),
+    ],
+    ids=["half-hour-offset", "last-microsecond-of-the-hour"],
+)
+def test_the_forecast_is_laid_out_on_utc_hours_whatever_the_offset_of_now(
+    now: datetime,
+) -> None:
+    service = build_service("plain", now, "test-key")
+
+    assert len(service.forecast) == 48
+    for row in [*service.rows["prices"], *service.forecast]:
+        assert row["start"].endswith(":00:00Z"), row
+    first = service.forecast[0]["start"]
+    assert first == now.astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
+
+
+MODULE_FIXTURE_PROBE = """
+import httpx
+import pytest
+
+
+@pytest.fixture(scope="module")
+def transport_while_the_module_is_set_up():
+    return httpx.AsyncHTTPTransport.handle_async_request.__name__
+
+
+@pytest.mark.live
+def test_a_module_scoped_fixture_sees_the_transports_already_refusing(
+    transport_while_the_module_is_set_up,
+):
+    assert transport_while_the_module_is_set_up == "refuse_async"
+"""
+
+
+def test_a_module_scoped_fixture_is_set_up_with_the_real_transports_already_refusing(
+    tmp_path: Path,
+) -> None:
+    # The live suite's `address` fixture is module-scoped and makes a request;
+    # pytest sets it up before any function-scoped autouse fixture has run.
+    result = _guard_project(
+        tmp_path, MODULE_FIXTURE_PROBE, plugins=(LIVE_PLUGIN,), env=PLUGIN_ENV
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+ROUTING_PROBE = """
+import httpx
+import pytest
+
+from energydata.minstroem import MinStroemClient, get_addresses
+
+
+@pytest.mark.live
+def test_a_client_given_a_real_transport_is_answered_by_the_mock():
+    with MinStroemClient(transport=httpx.AsyncHTTPTransport()) as client:
+        assert len(get_addresses(client=client)) == 1
+
+
+@pytest.mark.live
+def test_a_synchronous_httpx_client_is_refused_too():
+    with pytest.raises(AssertionError, match="tried to reach the network"):
+        httpx.Client().get("https://example.invalid/")
+"""
+
+
+def test_the_plugin_routes_a_client_given_a_real_transport_and_refuses_sync_httpx(
+    tmp_path: Path,
+) -> None:
+    result = _guard_project(
+        tmp_path, ROUTING_PROBE, plugins=(LIVE_PLUGIN,), env=PLUGIN_ENV
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+BLOCK_PROBE = r"""
+import httpx
+import pytest
+
+
+def test_the_synchronous_transport_refuses_and_names_the_url():
+    with pytest.raises(
+        AssertionError, match=r"tried to reach the network: https://example\.invalid/x\?y=1"
+    ):
+        httpx.Client().get("https://example.invalid/x?y=1")
+
+
+def test_a_mock_transport_is_left_alone():
+    transport = httpx.MockTransport(lambda request: httpx.Response(204))
+    with httpx.Client(transport=transport) as client:
+        assert client.get("https://example.invalid/").status_code == 204
+
+
+@pytest.mark.live
+def test_the_block_does_not_outlive_the_tests_it_guarded():
+    assert httpx.HTTPTransport.handle_request.__name__ == "handle_request"
+    assert (
+        httpx.AsyncHTTPTransport.handle_async_request.__name__
+        == "handle_async_request"
+    )
+"""
+
+
+def test_the_block_names_the_url_spares_mock_transports_and_is_undone_after_each_test(
+    tmp_path: Path,
+) -> None:
+    result = _guard_project(tmp_path, BLOCK_PROBE)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "3 passed" in result.stdout
+
+
+# --- the live suite, run offline: what the user's own run varies ------------------
+
+
+def test_every_live_test_passes_with_a_key_that_has_whitespace_around_it(
+    tmp_path: Path,
+) -> None:
+    # The client strips the key it sends; the plugin, the module's skip condition
+    # and the wrong-key test must read it the same way.
+    run = _run_live_suite("plain", tmp_path, env={API_KEY_ENV: f"  {DUMMY_KEY}\n"})
+
+    output = run.result.stdout
+    assert run.result.returncode == 0, output
+    assert {o for o in run.outcomes.values()} == {"passed"}, output
+    assert DUMMY_KEY not in output
+
+
+@pytest.mark.parametrize(
+    "key", ["", " ", "\t\n"], ids=["empty", "space", "tab-newline"]
+)
+def test_dash_m_live_with_a_blank_key_skips_every_test_like_no_key(key: str) -> None:
+    result = _pytest(
+        ["tests/test_minstroem_live.py", "-m", "live", "-rs", "-q"],
+        env={API_KEY_ENV: key},
+    )
+
+    last = result.stdout.splitlines()[-1]
+    assert result.returncode == 0, result.stdout
+    assert "skipped" in last
+    assert "failed" not in last
+    assert "error" not in last.lower()
+
+
+ADDRESS_CHOICES = [
+    pytest.param(
+        "two_addresses", ADDRESS_ID, NEEDS_FORECAST, id="first-address-cannot-forecast"
+    ),
+    pytest.param("two_addresses", SECOND_ADDRESS_ID, set(), id="second-address"),
+    pytest.param("two_addresses", SECOND_ADDRESS_ID.upper(), set(), id="upper-case-id"),
+    pytest.param("two_addresses", f"  {SECOND_ADDRESS_ID}\n", set(), id="padded-id"),
+    pytest.param(
+        "plain",
+        "00000000-0000-4000-8000-000000000000",
+        NEEDS_ADDRESS,
+        id="not-an-address-of-the-account",
+    ),
+]
+
+
+@pytest.mark.parametrize(("scenario", "chosen", "skipped"), ADDRESS_CHOICES)
+def test_the_address_named_by_minstroem_address_id_is_the_one_under_test(
+    tmp_path: Path, scenario: str, chosen: str, skipped: set[str]
+) -> None:
+    run = _run_live_suite(scenario, tmp_path, env={"MINSTROEM_ADDRESS_ID": chosen})
+
+    output = run.result.stdout
+    assert run.result.returncode == 0, output
+    assert len(run.outcomes) == LIVE_TEST_COUNT, output
+    assert {n for n, o in run.outcomes.items() if o == "skipped"} == skipped, output
+    assert {o for n, o in run.outcomes.items() if n not in skipped} == {"passed"}
+    if skipped == NEEDS_ADDRESS:
+        assert "MINSTROEM_ADDRESS_ID is not an address of this account" in output
+    for private in (DUMMY_KEY, ADDRESS_ID, SECOND_ADDRESS_ID, "Testvej", "Test Net"):
+        assert private.lower() not in output.lower()
+
+
+@pytest.mark.parametrize("tb", ["short", "auto", "long", "native", "line", "no"])
+def test_no_traceback_style_shows_the_key_an_address_id_or_the_address_text(
+    tmp_path: Path, tb: str
+) -> None:
+    # `--tb=long` (and `auto`, for the first and last frame) prints the arguments of
+    # every frame in the traceback: the fixture holding the address and the request
+    # path in the package's frames. Only `--showlocals` is not covered, and says so.
+    run = _run_live_suite(FAILING_SCENARIO, tmp_path, tb=tb)
+
+    output = run.result.stdout + run.result.stderr
+    failed = {n for n, o in run.outcomes.items() if o == "failure"}
+    assert failed == NEEDS_PRICES - {"test_live_prices_future_to_probe"}, output
+    for private in (
+        DUMMY_KEY,
+        ADDRESS_ID,
+        SECOND_ADDRESS_ID,
+        "Testvej",
+        "Test Net",
+    ):
+        assert private not in output, (tb, private)
+    if tb != "no":
+        assert "HTTP 404 resource_not_found on /me/addresses/<address>/prices" in output
+
+
+def _summary_lines(output: str) -> list[str]:
+    """The lines of the `MIN STRØM LIVE SUMMARY` block."""
+    lines = output.splitlines()
+    first = next(i for i, line in enumerate(lines) if "MIN STRØM LIVE SUMMARY" in line)
+    last = next(i for i in range(first + 1, len(lines)) if lines[i].startswith("="))
+    return lines[first + 1 : last]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "skipped", "_shows"),
+    PASSING_SCENARIOS,
+    ids=[scenario for scenario, _skipped, _shows in PASSING_SCENARIOS],
+)
+def test_the_summary_has_one_line_per_test_that_reported(
+    tmp_path: Path, scenario: str, skipped: set[str], _shows: str
+) -> None:
+    run = _run_live_suite(scenario, tmp_path)
+
+    lines = _summary_lines(run.result.stdout)
+    # A test that skips reports nothing; every other test adds exactly one line.
+    assert len(lines) == LIVE_TEST_COUNT - len(skipped), lines
+    assert all(line.strip() for line in lines)
+
+
+def test_at_a_pinned_instant_the_summary_is_the_same_every_time(
+    tmp_path: Path,
+) -> None:
+    first = _summary_lines(_run_live_suite("plain", tmp_path).result.stdout)
+    second = _summary_lines(_run_live_suite("plain", tmp_path).result.stdout)
+
+    assert first == second
+    expected = [
+        "forecast: 48 hours 2026-06-15T12:00:00+02:00 .. 2026-06-17T11:00:00+02:00, "
+        "region DK1, DKK, first 0.600, last 0.590",
+        "combined (today..): 60 hours 2026-06-15T00:00:00+02:00 .. "
+        "2026-06-17T11:00:00+02:00, confirmed 36, forecast 24, neither 0",
+        "combined (yesterday..+2d): 72 hours, 0 NaN",
+        "combined cross-check: 60 confirmed hours match get_prices, "
+        "12 forecast hours match get_forecast_prices",
+    ]
+    for line in expected:
+        assert line in first, line
+
+
+# --- the live suite's helpers, in process -----------------------------------------
+
+REQUEST_ID = "9f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+
+
+def test_a_failure_report_keeps_a_uuid_request_id_and_removes_only_the_address_id() -> (
+    None
+):
+    error = MinStroemError(
+        f"Min Strøm API: HTTP 404 resource_not_found on /me/addresses/{ADDRESS_ID}"
+        f"/prices: The resource was not found. (request id {REQUEST_ID})",
+        status=404,
+        error_code="resource_not_found",
+        reason="The resource was not found.",
+        request_id=REQUEST_ID,
+    )
+
+    text = live_suite._describe(error)
+
+    assert f"request_id={REQUEST_ID}" in text
+    assert f"(request id {REQUEST_ID})" in text
+    assert "/me/addresses/<address>/prices" in text
+    assert ADDRESS_ID not in text.lower()
+
+
+def test_a_failure_report_removes_an_address_id_the_reason_repeats() -> None:
+    error = MinStroemError(
+        f"Min Strøm API: HTTP 404 on /me/addresses/{ADDRESS_ID}/prices: "
+        f"No prices for address {ADDRESS_ID.upper()}. (request id {REQUEST_ID})",
+        status=404,
+        reason=f"No prices for address {ADDRESS_ID.upper()}.",
+        request_id=REQUEST_ID,
+    )
+
+    text = live_suite._describe(error)
+
+    assert "reason='No prices for address <address>.'" in text
+    assert ADDRESS_ID not in text.lower()
+    assert text.count(REQUEST_ID) == 2
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"/me/addresses/{ADDRESS_ID}/prices", "/me/addresses/<address>/prices"),
+        (ADDRESS_ID.upper(), "<address>"),
+        ("{" + ADDRESS_ID + "}", "{<address>}"),
+        (f"{ADDRESS_ID} and {SECOND_ADDRESS_ID}", "<address> and <address>"),
+        ("ff" + ADDRESS_ID + "ff", "ff<address>ff"),
+        ("5b0ac4d2 only", "5b0ac4d2 only"),
+        ("", ""),
+    ],
+    ids=["path", "upper", "braces", "two", "glued", "partial", "empty"],
+)
+def test_every_form_of_an_address_id_is_replaced(text: str, expected: str) -> None:
+    assert live_suite._anonymous(text) == expected
+
+
+def test_one_uuid_can_be_kept_whatever_its_case() -> None:
+    text = f"{ADDRESS_ID} {REQUEST_ID.upper()} {REQUEST_ID}"
+
+    assert live_suite._anonymous(text, keep=REQUEST_ID) == (
+        f"<address> {REQUEST_ID.upper()} {REQUEST_ID}"
+    )
+
+
+def _frames(caught: pytest.ExceptionInfo[BaseException]) -> list[str]:
+    return [entry.name for entry in caught.traceback]
+
+
+def _deeper() -> None:
+    cause = httpx.ConnectError(
+        f"refused for https://api.minstroem.app/consumer/v1/me/addresses/{ADDRESS_ID}/prices"
+    )
+    raise RetriesExhaustedError(3, None, cause) from cause
+
+
+def test_a_retry_error_becomes_an_anonymous_assertion_that_keeps_only_the_test_frame() -> (
+    None
+):
+    def failing() -> None:
+        _deeper()
+
+    with pytest.raises(AssertionError) as caught:
+        live_suite._anonymous_failures(failing)()
+
+    error = caught.value
+    assert str(error).startswith("a request failed: RetriesExhaustedError: ")
+    assert "/me/addresses/<address>/prices" in str(error)
+    assert ADDRESS_ID not in str(error).lower()
+    assert error.__cause__ is None
+    assert error.__suppress_context__ is True
+    # The test's own frame is the last one shown; the package's frames, whose
+    # arguments hold the request path, are not in the report at all.
+    assert _frames(caught)[-1] == "failing"
+    assert "_deeper" not in _frames(caught)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.skip.Exception("lacks prices"),
+        AssertionError("plain"),
+        KeyboardInterrupt(),
+    ],
+    ids=["skip", "assertion", "interrupt"],
+)
+def test_other_exceptions_pass_through_a_live_test_untouched(
+    exc: BaseException,
+) -> None:
+    def failing() -> None:
+        raise exc
+
+    with pytest.raises(type(exc)) as caught:
+        live_suite._anonymous_failures(failing)()
+
+    assert caught.value is exc
+
+
+def test_a_live_test_that_passes_returns_what_it_returned() -> None:
+    assert live_suite._anonymous_failures(lambda: 42)() == 42
+
+
+def test_hours_treats_an_unknown_flag_as_neither_and_keeps_the_zone() -> None:
+    index = pd.date_range("2026-06-15", periods=4, freq="h", tz="Europe/Copenhagen")
+    flags = pd.Series([False, pd.NA, True, True], index=index, dtype="boolean")
+    nothing = pd.Series([pd.NA, pd.NA], index=index[:2], dtype="boolean")
+    empty = pd.Series([], index=index[:0], dtype="boolean")
+
+    assert list(live_suite._hours(flags, False)) == [index[0]]
+    assert list(live_suite._hours(flags, True)) == list(index[2:])
+    assert str(live_suite._hours(flags, True).tz) == "Europe/Copenhagen"
+    assert len(live_suite._hours(nothing, True)) == 0
+    assert len(live_suite._hours(nothing, False)) == 0
+    assert len(live_suite._hours(empty, True)) == 0
+    assert str(live_suite._hours(empty, True).tz) == "Europe/Copenhagen"
+
+
+def test_the_address_and_its_id_hide_themselves_from_a_report_of_arguments() -> None:
+    address = live_suite._Address(
+        {
+            "id": ADDRESS_ID,
+            "label": "Home",
+            "formatted_address": "Testvej 1, 1000 Testby",
+            "prices": True,
+        }
+    )
+
+    identifier = live_suite._need(address, "prices")
+
+    # pytest prints the arguments of a frame, and `-l` its locals, with `repr`.
+    assert repr(address) == "<address>"
+    assert repr({"argument": address}) == "{'argument': <address>}"
+    assert repr(identifier) == "<private>"
+    assert identifier == ADDRESS_ID
+    assert f"/me/addresses/{identifier}/prices" == f"/me/addresses/{ADDRESS_ID}/prices"
+    assert address["label"] == "Home"
+
+
+@pytest.fixture
+def pinned_clock(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """`pandas.Timestamp.now` fixed to `PINNED_NOW`, as the plugin does for a run."""
+    pinned = datetime.fromisoformat(PINNED_NOW).astimezone(UTC)
+    monkeypatch.setattr(
+        pd.Timestamp, "now", staticmethod(live_mock._fixed_clock(pinned))
+    )
+    return pinned
+
+
+def test_the_cross_check_survives_day_ahead_publication_between_its_requests(
+    pinned_clock: datetime,
+) -> None:
+    # "Forecasts follow the latest confirmed price": when tomorrow's prices are
+    # published (around 13:00) the confirmed prices grow by a day and the forecast
+    # starts a day later. The cross-check makes four requests and may meet that.
+    service = build_service("plain", pinned_clock, DUMMY_KEY)
+    midnight = datetime(2026, 6, 14, 22, tzinfo=UTC)  # local midnight, 15 June
+
+    def day(offset: int) -> datetime:
+        return midnight + timedelta(days=offset)
+
+    service.rows["prices"] = live_mock._hourly(day(-3), day(1))
+    service.forecast = live_mock._hourly(day(1), day(3))
+    published: list[bool] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        response = service(request)
+        if request.url.path.endswith("/prices") and not published:
+            published.append(True)
+            service.rows["prices"] = live_mock._hourly(day(-3), day(2))
+            service.forecast = live_mock._hourly(day(2), day(4))
+        return response
+
+    address = live_suite._Address(
+        {"id": ADDRESS_ID, "forecast_prices": True, "prices": True}
+    )
+    lines: list[str] = []
+    client = MinStroemClient(
+        DUMMY_KEY,
+        policy=RetryPolicy(base_delay=0.0, max_delay=0.0),
+        transport=httpx.MockTransport(answer),
+    )
+
+    with client:
+        live_suite.test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
+            client, address, lines.append
+        )
+
+    assert published
+    assert any("forecast moved during the run" in line for line in lines), lines
+
+
+def test_a_forecast_that_holds_still_is_compared_value_for_value(
+    pinned_clock: datetime,
+) -> None:
+    service = build_service("plain", pinned_clock, DUMMY_KEY)
+    address = live_suite._Address(
+        {"id": ADDRESS_ID, "forecast_prices": True, "prices": True}
+    )
+    lines: list[str] = []
+
+    with service.client(DUMMY_KEY) as client:
+        live_suite.test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
+            client, address, lines.append
+        )
+
+    assert [line for line in lines if "match get_forecast_prices" in line], lines
+
+
+def test_the_package_and_the_live_suite_read_the_clock_only_through_timestamp_now() -> (
+    None
+):
+    # The plugin pins `pandas.Timestamp.now` and nothing else: any other read of the
+    # clock would escape the pin and bring back the race the pin was added to fix.
+    clock = re.compile(
+        r"\b(?:datetime|date)\.(?:now|today|utcnow)\("
+        r"|Timestamp\.utcnow\(|\btime\.time\("
+        r"|(?:Timestamp|to_datetime)\(\s*[\"'](?:now|today)[\"']"
+    )
+    sources = [
+        *sorted(PACKAGE_DIR.glob("*.py")),
+        REPO / "tests" / "test_minstroem_live.py",
+    ]
+
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        assert clock.search(text) is None, path.name
+    assert "pd.Timestamp.now(" in (PACKAGE_DIR / "prices.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_mocks_request_ids_are_uuids_like_the_specs_header() -> None:
+    header = SPEC["components"]["headers"]["RequestId"]
+    service = MinStroemService()
+
+    seen = [
+        service(httpx.Request("GET", f"{BASE_URL}/me/addresses")).headers[
+            "X-Request-ID"
+        ]
+        for _ in range(3)
+    ]
+
+    assert header["schema"]["format"] == "uuid"
+    assert seen == [conftest.minstroem_request_id(n) for n in (1, 2, 3)]
+    assert len(set(seen)) == 3
+    for found in seen:
+        assert re.fullmatch(UUID_TEXT, found)
 
 
 # === the package surface =========================================================

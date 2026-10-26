@@ -5,13 +5,15 @@ the live tests themselves would only show on the user's machine. This plugin let
 the offline suite run those tests anyway. Loaded with `-p minstroem_live_mock`,
 a dummy `MINSTROEM_API_KEY` and a scenario name in `MINSTROEM_LIVE_MOCK`, it gives
 every `MinStroemClient` the transport of a `MinStroemService` shaped by that
-scenario, and keeps every real httpx transport refusing, so the run cannot reach
-the network even though the live tests are exempt from the main guard.
+scenario, and keeps every real httpx transport refusing from the moment pytest is
+configured, so the run cannot reach the network even though the live tests are
+exempt from the main guard and their module-scoped fixtures are set up before any
+per-test guard could run.
 
 The scenarios are the shapes of data the real API makes ordinary and a test
 written against a tidy mock would never meet: a missing confirmed hour, a
 forecast that starts after a gap and has holes in it, no forecast at all, an
-address without a capability, several addresses, and a failing endpoint.
+address without a capability, no address, several addresses, and a failing endpoint.
 
 The data is laid out around the instant the run starts, and the package and the
 live tests read the clock themselves (the confirmed-price cap, `fetched_at`, "today"
@@ -51,6 +53,7 @@ SCENARIOS = (
     "empty_forecast",
     "no_prices",
     "no_forecast",
+    "no_addresses",
     "two_addresses",
     "prices_not_found",
 )
@@ -88,17 +91,22 @@ def build_service(scenario: str, now: datetime, api_key: str) -> MinStroemServic
 
     Confirmed prices run from three days back to tomorrow noon and the forecast
     from the current hour for 48 hours, so the two overlap and the forecast
-    reaches past the confirmed prices; each scenario then bends one thing:
+    reaches past the confirmed prices; each scenario then bends one thing. A time
+    such as "02:00 today" or "tomorrow noon" is that many elapsed hours after local
+    midnight, so on a daylight-saving change day it is an hour off the wall clock.
 
     - `plain`: that shape, no holes.
     - `hole`: two confirmed hours missing (one today, one yesterday) and one
       confirmed row with a null total.
-    - `gappy_forecast`: confirmed prices stop at 02:00 today, the forecast
-      starts two hours after the current hour, misses two hours and has a null
-      total in its first row and a null variable charge in a later one.
+    - `gappy_forecast`: confirmed prices stop at 02:00 today, or at the current
+      hour when that is earlier; the forecast starts two hours after the current
+      hour, so the current hour and the next have neither source whatever the time
+      of day. It also misses two hours and has a null total in its first row and a
+      null variable charge in a later one.
     - `empty_forecast`: the forecast has no rows.
     - `no_prices`: the address lacks the `prices` capability.
     - `no_forecast`: the address lacks the `forecastPrices` capability.
+    - `no_addresses`: the account has no address.
     - `two_addresses`: the account has a second address, which is the one that
       can forecast.
     - `prices_not_found`: `/prices` answers 404 with the address id in its reason.
@@ -137,7 +145,7 @@ def build_service(scenario: str, now: datetime, api_key: str) -> MinStroemServic
             at(-3), at(1, 12), holes={at(0, 1), at(-1, 5)}, null_total={at(0, 3)}
         )
     elif scenario == "gappy_forecast":
-        confirmed = _hourly(at(-3), at(0, 2))
+        confirmed = _hourly(at(-3), min(at(0, 2), ahead(0)))
         forecast = _hourly(
             ahead(2),
             ahead(40),
@@ -151,6 +159,8 @@ def build_service(scenario: str, now: datetime, api_key: str) -> MinStroemServic
         addresses = [minstroem_address(prices=False)]
     elif scenario == "no_forecast":
         addresses = [minstroem_address(forecastPrices=False)]
+    elif scenario == "no_addresses":
+        addresses = []
     elif scenario == "two_addresses":
         addresses = [
             minstroem_address(label="Flat", forecastPrices=False),
@@ -205,16 +215,35 @@ def _fixed_clock(pinned: datetime) -> Callable[[tzinfo | str | None], pd.Timesta
 def pytest_configure() -> None:
     """Give every `MinStroemClient` the transport of the scenario's mock.
 
-    With `NOW_ENV` set, the data is laid out around that instant and
-    `pandas.Timestamp.now` is fixed to it until `pytest_unconfigure`.
+    Real httpx transports refuse from here, before any fixture of any scope is
+    set up, until `pytest_unconfigure`. With `NOW_ENV` set, the data is laid out
+    around that instant and `pandas.Timestamp.now` is fixed to it too.
+
+    Raises:
+        pytest.UsageError: If there is no usable key (the client strips it, so a
+            blank one is none), the scenario is not one of `SCENARIOS`, or the
+            instant is not an ISO 8601 time with an offset the data can be laid
+            out around.
     """
-    key = os.environ.get(API_KEY_ENV)
+    key = os.environ.get(API_KEY_ENV, "").strip()
     if not key:
         raise pytest.UsageError(f"minstroem_live_mock needs a dummy {API_KEY_ENV}")
-    pinned = _pinned_now(os.environ.get(NOW_ENV))
-    service = build_service(
-        os.environ.get(SCENARIO_ENV, "plain"), pinned or datetime.now(UTC), key
-    )
+    scenario = os.environ.get(SCENARIO_ENV) or "plain"
+    if scenario not in SCENARIOS:
+        known = ", ".join(SCENARIOS)
+        raise pytest.UsageError(
+            f"{SCENARIO_ENV} must be one of {known}, got {scenario!r}"
+        )
+    raw_now = os.environ.get(NOW_ENV)
+    pinned = _pinned_now(raw_now)
+    try:
+        service = build_service(scenario, pinned or datetime.now(UTC), key)
+    except OverflowError as error:
+        raise pytest.UsageError(
+            f"{NOW_ENV} is too close to the end of the calendar to lay data out "
+            f"around, got {raw_now!r}"
+        ) from error
+    block_real_transports(_PATCHES)
     if pinned is not None:
         _PATCHES.setattr(pd.Timestamp, "now", staticmethod(_fixed_clock(pinned)))
     original = MinStroemClient.__init__
@@ -241,11 +270,5 @@ def pytest_configure() -> None:
 
 
 def pytest_unconfigure() -> None:
-    """Restore `MinStroemClient` and the clock."""
+    """Restore `MinStroemClient`, the clock and the real transports."""
     _PATCHES.undo()
-
-
-@pytest.fixture(autouse=True)
-def _real_transports_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the no-network guard for the live tests the main guard lets through."""
-    block_real_transports(monkeypatch)

@@ -2,9 +2,17 @@
 
 Every test is marked `live`, so plain `pytest` deselects them. Run them with
 `MINSTROEM_API_KEY` set and `-m live`; each adds a line to the end-of-run
-summary. Nothing here prints the key, an address text or an address id: a failed
-request is reported with its status, error code, reason and request id and the
-address id replaced by `<address>`, because the output is pasted into a chat.
+summary.
+
+The output is pasted into a chat, so nothing here prints the key, an address text
+or an address id, under any traceback style (`--tb=short`, `auto`, `long`,
+`native`, `line`, `no`). The one thing that defeats it is `--showlocals` (`-l`),
+which prints every local variable, the addresses frame included: do not add it.
+A failed request is reported with its status, error code, reason and request id
+and the address id replaced by `<address>`, and without the frames of the
+package, whose arguments hold the request path. The address and the id the tests
+pass around are objects whose `repr`, which pytest prints for the arguments of a
+frame, is `<address>` and `<private>`.
 
 The suite's own logic is run offline, against the in-repo mock, by
 `tests/test_minstroem_spec.py` through `tests/minstroem_live_mock.py`.
@@ -16,6 +24,7 @@ import os
 import re
 import uuid
 from collections.abc import Callable, Iterator
+from types import TracebackType
 
 import pandas as pd
 import pytest
@@ -39,7 +48,8 @@ from energydata.utils import RetryError
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(
-        not os.environ.get(API_KEY_ENV),
+        # The client strips its key, so a blank one is none.
+        not os.environ.get(API_KEY_ENV, "").strip(),
         reason="set MINSTROEM_API_KEY to run the live Min Strøm tests",
     ),
 ]
@@ -53,9 +63,38 @@ _ADDRESS_ID = re.compile(
 )
 
 
-def _anonymous(text: str) -> str:
-    """`text` with every address id (a UUID) replaced by `<address>`."""
-    return _ADDRESS_ID.sub("<address>", text)
+class _Private(str):
+    """A string that shows as `<private>`: pytest prints a `repr` for arguments and locals."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<private>"
+
+
+class _Address(dict[str, object]):
+    """One row of `get_addresses`, shown as `<address>` in a report of arguments."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<address>"
+
+
+def _anonymous(text: str, *, keep: str | None = None) -> str:
+    """`text` with every address id (a UUID) replaced by `<address>`.
+
+    The API's request id is a UUID too, and the one fact support asks for, so
+    `keep` (any case) is left as it is.
+    """
+    kept = (keep or "").lower()
+
+    def replace(found: re.Match[str]) -> str:
+        return (
+            found.group(0) if kept and found.group(0).lower() == kept else "<address>"
+        )
+
+    return _ADDRESS_ID.sub(replace, text)
 
 
 def _describe(error: MinStroemError | RetryError) -> str:
@@ -70,9 +109,22 @@ def _describe(error: MinStroemError | RetryError) -> str:
             f"reason={error.reason!r} request_id={error.request_id}"
         )
         return _anonymous(
-            f"a request failed: {type(error).__name__}: {error} [{facts}]"
+            f"a request failed: {type(error).__name__}: {error} [{facts}]",
+            keep=error.request_id,
         )
     return _anonymous(f"a request failed: {type(error).__name__}: {error}")
+
+
+def _test_frame(
+    entry: TracebackType | None, test: Callable[..., object]
+) -> TracebackType | None:
+    """The traceback entry of `test` itself, with the frames it called cut off."""
+    code = getattr(test, "__code__", None)
+    while entry is not None and entry.tb_frame.f_code is not code:
+        entry = entry.tb_next
+    if entry is not None:
+        entry.tb_next = None
+    return entry
 
 
 def _anonymous_failures[**P, R](test: Callable[P, R]) -> Callable[P, R]:
@@ -81,8 +133,10 @@ def _anonymous_failures[**P, R](test: Callable[P, R]) -> Callable[P, R]:
     A `MinStroemError` (or a `RetryError`) puts the address id into the path in
     its message, and the exception it was chained from puts it in the URL. The
     output is pasted back into a chat, so the test fails with `_describe` instead,
-    with the chain suppressed and the original frames kept. Skips, assertion
-    failures and everything else pass through untouched.
+    with the chain suppressed and the traceback cut at the test's own frame: the
+    frames below it, in the package, have the request path as an argument, which
+    `--tb=long` prints. Skips, assertion failures and everything else pass through
+    untouched.
     """
 
     @functools.wraps(test)
@@ -91,7 +145,7 @@ def _anonymous_failures[**P, R](test: Callable[P, R]) -> Callable[P, R]:
             return test(*args, **kwargs)
         except (MinStroemError, RetryError) as error:
             raise AssertionError(_describe(error)).with_traceback(
-                error.__traceback__
+                _test_frame(error.__traceback__, test)
             ) from None
 
     return run
@@ -105,28 +159,32 @@ def live_client() -> Iterator[MinStroemClient]:
 
 
 @pytest.fixture(scope="module")
-def address(live_client: MinStroemClient) -> dict[str, object]:
-    """The address under test: `MINSTROEM_ADDRESS_ID`, else one that forecasts."""
+def address(live_client: MinStroemClient) -> _Address:
+    """The address under test: `MINSTROEM_ADDRESS_ID`, else one that forecasts.
+
+    `MINSTROEM_ADDRESS_ID` is matched without regard to case or surrounding space,
+    as the package accepts an explicit id in either case.
+    """
     addresses = get_addresses(client=live_client)
     if addresses.empty:
         pytest.skip("the account has no addresses")
-    wanted = os.environ.get("MINSTROEM_ADDRESS_ID")
+    wanted = os.environ.get("MINSTROEM_ADDRESS_ID", "").strip().lower()
     if wanted:
-        rows = addresses[addresses["id"] == wanted]
+        rows = addresses[addresses["id"].str.lower() == wanted]
         if rows.empty:
             pytest.skip("MINSTROEM_ADDRESS_ID is not an address of this account")
     else:
         rows = addresses[addresses["forecast_prices"]]
         if rows.empty:
             rows = addresses
-    return {str(key): value for key, value in rows.iloc[0].to_dict().items()}
+    return _Address({str(key): value for key, value in rows.iloc[0].to_dict().items()})
 
 
-def _need(address: dict[str, object], capability: str) -> str:
+def _need(address: _Address, capability: str) -> _Private:
     """The address id, or skip the test naming the missing capability."""
     if not address[capability]:
         pytest.skip(f"the address lacks the {capability!r} capability")
-    return str(address["id"])
+    return _Private(str(address["id"]))
 
 
 def _span(frame: pd.DataFrame) -> str:
@@ -180,7 +238,7 @@ def test_live_addresses_shape(
 
 @_anonymous_failures
 def test_live_forecast_prices(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
 
@@ -195,7 +253,9 @@ def test_live_forecast_prices(
     if not forecast.empty:
         assert forecast.index.is_monotonic_increasing
         assert (forecast.index.to_series().diff().dropna() == pd.Timedelta("1h")).all()
-        now = pd.Timestamp.now(tz=TZ)
+        # Floored in UTC: a Copenhagen time cannot be floored in the repeated hour
+        # of the autumn change, where 02:30 is ambiguous.
+        now = pd.Timestamp.now(tz="UTC")
         assert forecast.index[0] >= now.floor("h") - pd.Timedelta("1h")
         assert forecast["total_price_per_kwh"].dropna().map(math.isfinite).all()
         live_report(
@@ -210,7 +270,7 @@ def test_live_forecast_prices(
 
 @_anonymous_failures
 def test_live_prices_with_forecast_open_end(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
     _need(address, "prices")
@@ -245,7 +305,7 @@ def test_live_prices_with_forecast_open_end(
 
 @_anonymous_failures
 def test_live_prices_with_forecast_closed_end(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
     _need(address, "prices")
@@ -266,19 +326,28 @@ def test_live_prices_with_forecast_closed_end(
 
 @_anonymous_failures
 def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
-    """Cross-check the combined series against the two endpoints it is made of."""
+    """Cross-check the combined series against the two endpoints it is made of.
+
+    The four requests are not one snapshot: when the next day's prices are
+    published the confirmed prices grow by a day and the forecast starts a day
+    later. Confirmed prices do not change once published, so they are always
+    compared; the forecast is compared value for value only when it is the same
+    before and after the combined request, and otherwise only required to be made
+    of hours one of the two snapshots had.
+    """
     address_id = _need(address, "forecast_prices")
     _need(address, "prices")
     start = _day(-1)
     end = _day(2)
 
+    forecast_before = get_forecast_prices(address_id=address_id, client=live_client)
     combined = get_prices_with_forecast(
         start, end, address_id=address_id, client=live_client
     )
     confirmed = get_prices(start, end, address_id=address_id, client=live_client)
-    forecast = get_forecast_prices(address_id=address_id, client=live_client)
+    forecast_after = get_forecast_prices(address_id=address_id, client=live_client)
 
     total = "total_price_per_kwh"
     flags = combined["is_forecast"]
@@ -289,22 +358,34 @@ def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
         confirmed.loc[shown, total],
         check_freq=False,
     )
-    pd.testing.assert_series_equal(
-        combined.loc[predicted, total],
-        forecast.loc[predicted, total],
-        check_freq=False,
-    )
     if len(shown) and len(predicted):
         assert shown.max() < predicted.min()
+    if forecast_before.equals(forecast_after):
+        assert predicted.isin(forecast_after.index).all(), (
+            "forecast hours not in the forecast"
+        )
+        pd.testing.assert_series_equal(
+            combined.loc[predicted, total],
+            forecast_after.loc[predicted, total],
+            check_freq=False,
+        )
+        compared = f"{len(predicted)} forecast hours match get_forecast_prices"
+    else:
+        known = forecast_before.index.union(forecast_after.index)
+        assert predicted.isin(known).all(), "forecast hours in neither snapshot"
+        compared = (
+            f"the forecast moved during the run, so its {len(predicted)} hours "
+            "in the combined series were not compared value for value"
+        )
     live_report(
         f"combined cross-check: {len(shown)} confirmed hours match get_prices, "
-        f"{len(predicted)} forecast hours match get_forecast_prices"
+        f"{compared}"
     )
 
 
 @_anonymous_failures
 def test_live_forecast_hours_are_whole_local_hours_and_unique(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
 
@@ -328,7 +409,7 @@ def test_live_forecast_hours_are_whole_local_hours_and_unique(
 
 @_anonymous_failures
 def test_live_prices_hour(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "prices")
     start = _day(-2)
@@ -347,7 +428,7 @@ def test_live_prices_hour(
 
 @_anonymous_failures
 def test_live_prices_fifteen_minutes(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "prices")
     start = _day(-1)
@@ -370,7 +451,7 @@ def test_live_prices_fifteen_minutes(
 
 @_anonymous_failures
 def test_live_prices_future_to_probe(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     """Report whether `/prices` accepts a `to` three days ahead; passes either way."""
     address_id = _need(address, "prices")
@@ -392,7 +473,7 @@ def test_live_prices_future_to_probe(
 @_anonymous_failures
 def test_live_consumption(
     live_client: MinStroemClient,
-    address: dict[str, object],
+    address: _Address,
     live_report: Report,
     aggregation: Aggregation,
 ) -> None:
@@ -422,7 +503,7 @@ def test_live_consumption(
 
 @_anonymous_failures
 def test_live_solar_export(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "solar_export")
 
@@ -440,7 +521,7 @@ def test_live_solar_export(
 
 @_anonymous_failures
 def test_live_consumption_costs(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "consumption_costs")
 
@@ -461,7 +542,7 @@ def test_live_consumption_costs(
 
 @_anonymous_failures
 def test_live_solar_export_revenue(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "solar_export_revenue")
 
@@ -482,7 +563,7 @@ def test_live_solar_export_revenue(
 
 @_anonymous_failures
 def test_live_hourly_consumption_over_two_windows(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     address_id = _need(address, "consumption")
     start = _day(-400)
@@ -500,7 +581,7 @@ def test_live_hourly_consumption_over_two_windows(
 
 @_anonymous_failures
 def test_live_listed_address_id_works_as_listed(
-    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+    live_client: MinStroemClient, address: _Address, live_report: Report
 ) -> None:
     """The id from `get_addresses` is accepted by the series endpoints as listed.
 
@@ -524,8 +605,8 @@ def test_live_listed_address_id_works_as_listed(
 
 @_anonymous_failures
 def test_live_wrong_key_is_401_and_never_echoed(live_report: Report) -> None:
-    wrong = "not-the-key-" + uuid.uuid4().hex
-    real = os.environ[API_KEY_ENV]
+    wrong = _Private("not-the-key-" + uuid.uuid4().hex)
+    real = _Private(os.environ[API_KEY_ENV].strip())
 
     with MinStroemClient(wrong) as client, pytest.raises(MinStroemError) as caught:
         get_addresses(client=client)
@@ -570,8 +651,13 @@ def test_live_address_default(
     elif len(addresses) == 1:
         live_report("address default: one address without forecast capability")
     else:
-        with pytest.raises(ValueError, match="address_id"):
+        # No address and several both refuse the default and say what to do. The
+        # message for several lists every id and label, so it is never printed.
+        wanted = "no addresses on this account" if addresses.empty else "address_id"
+        with pytest.raises(ValueError) as caught:
             get_forecast_prices(client=live_client)
+        explained = wanted in str(caught.value)
+        assert explained, "the ValueError for the default address did not say why"
         live_report(
             f"address default: {len(addresses)} addresses, ValueError as designed"
         )

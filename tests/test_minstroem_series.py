@@ -8,7 +8,12 @@ from typing import Any, Literal, NamedTuple
 import httpx
 import pandas as pd
 import pytest
-from conftest import ADDRESS_ID, MinStroemService, minstroem_address
+from conftest import (
+    ADDRESS_ID,
+    MinStroemService,
+    minstroem_address,
+    minstroem_request_id,
+)
 
 from energydata.minstroem import (
     API_KEY_ENV,
@@ -1066,7 +1071,7 @@ def test_a_windowed_failure_still_carries_the_http_error_of_a_single_request() -
     assert (error.status, error.error_code, error.request_id) == (
         404,
         "resource_not_found",
-        "req-1",
+        minstroem_request_id(1),
     )
     assert isinstance(error.__cause__, BaseExceptionGroup)
     assert error in error.__cause__.exceptions
@@ -1461,7 +1466,7 @@ def test_the_mock_stamps_a_running_request_id_on_every_response() -> None:
         _ask(service, "nope", address=OTHER).headers["X-Request-ID"],
     ]
 
-    assert ids == ["req-1", "req-2", "req-3"]
+    assert ids == [minstroem_request_id(n) for n in (1, 2, 3)]
     assert len(service.requests) == 3
 
 
@@ -1837,7 +1842,7 @@ def test_an_override_answers_in_place_of_the_mock_and_skips_the_key_check() -> N
     response = _ask(service, "consumption", key=None, **GOOD)
 
     assert response.status_code == 418
-    assert response.headers["X-Request-ID"] == "req-1"
+    assert response.headers["X-Request-ID"] == minstroem_request_id(1)
 
 
 def test_the_mock_records_every_request_and_calls_reads_back_by_suffix() -> None:
