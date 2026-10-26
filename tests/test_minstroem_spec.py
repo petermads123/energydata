@@ -8,14 +8,18 @@ import re
 import subprocess
 import sys
 import types
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
+from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
 import pytest
 from conftest import ADDRESS_ID, MinStroemService, minstroem_price_row
+from minstroem_live_mock import SCENARIOS, SECOND_ADDRESS_ID, build_service
 
 import energydata.minstroem as package
 from energydata.minstroem import (
@@ -735,13 +739,20 @@ def test_dash_m_live_without_a_key_skips_every_test_and_does_not_fail() -> None:
     assert f"set {API_KEY_ENV} to run the live Min Strøm tests" in result.stdout
 
 
-def _guard_project(tmp_path: Path, tests: str) -> subprocess.CompletedProcess[str]:
+def _guard_project(
+    tmp_path: Path,
+    tests: str,
+    *,
+    plugins: tuple[str, ...] = (),
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run `tests` in a throwaway project that loads this suite's conftest as a plugin."""
     (tmp_path / "test_probe.py").write_text(tests, encoding="utf-8")
     return _pytest(
         [
             "-p",
             "conftest",
+            *[arg for plugin in plugins for arg in ("-p", plugin)],
             f"--rootdir={tmp_path}",
             "-o",
             "addopts=",
@@ -750,7 +761,10 @@ def _guard_project(tmp_path: Path, tests: str) -> subprocess.CompletedProcess[st
             "-q",
             "test_probe.py",
         ],
-        env={"PYTHONPATH": f"{REPO / 'tests'}{os.pathsep}{REPO / 'src'}"},
+        env={
+            "PYTHONPATH": f"{REPO / 'tests'}{os.pathsep}{REPO / 'src'}",
+            **(env or {}),
+        },
         cwd=tmp_path,
     )
 
@@ -820,6 +834,258 @@ def test_the_summary_lists_the_lines_in_the_order_they_were_reported(
         < out.index("first line")
         < out.index("second line")
     )
+
+
+# --- the live suite, run offline against the mock ------------------------------
+#
+# The live tests are only ever run on the user's machine, so a defect in the tests
+# themselves (not in the package) would first show there. `tests/minstroem_live_mock.py`
+# is a plugin that routes every MinStroemClient to the in-repo mock, shaped by a
+# scenario; these tests run the whole live suite under each scenario.
+
+LIVE_PLUGIN = "minstroem_live_mock"
+DUMMY_KEY = "dummy-key-for-the-offline-live-run"
+LIVE_TEST_COUNT = 21  # 18 functions, consumption once per aggregation
+
+NEEDS_PRICES = {
+    "test_live_prices_with_forecast_open_end",
+    "test_live_prices_with_forecast_closed_end",
+    "test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after",
+    "test_live_prices_hour",
+    "test_live_prices_fifteen_minutes",
+    "test_live_prices_future_to_probe",
+    "test_live_listed_address_id_works_as_listed",
+}
+NEEDS_FORECAST = {
+    "test_live_forecast_prices",
+    "test_live_prices_with_forecast_open_end",
+    "test_live_prices_with_forecast_closed_end",
+    "test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after",
+    "test_live_forecast_hours_are_whole_local_hours_and_unique",
+}
+
+# Hours of the open-ended combined series with neither a confirmed nor a forecast
+# row, as (least, most): <NA> in `is_forecast`, never filled from the other source.
+EXPECTED_NEITHER: dict[str, tuple[int, int]] = {
+    "plain": (0, 0),  # tidy data: every hour has a source
+    "hole": (1, 10**6),  # a confirmed hour missing between confirmed hours
+    "gappy_forecast": (2, 10**6),  # a forecast that starts after a gap and has holes
+    "empty_forecast": (1, 10**6),  # no forecast rows: runs on to the confirmed cap
+    "two_addresses": (0, 0),
+}
+
+
+class _LiveRun(NamedTuple):
+    result: subprocess.CompletedProcess[str]
+    outcomes: dict[str, str]  # test name -> passed, failure, error or skipped
+
+
+def _run_live_suite(scenario: str, tmp_path: Path) -> _LiveRun:
+    """Run the whole live suite against the mock for `scenario`, in a fresh process."""
+    report = tmp_path / "live.xml"
+    result = _pytest(
+        [
+            "-p",
+            LIVE_PLUGIN,
+            "tests/test_minstroem_live.py",
+            "-m",
+            "live",
+            "-rA",
+            "--tb=short",
+            f"--junitxml={report}",
+        ],
+        env={
+            API_KEY_ENV: DUMMY_KEY,
+            "MINSTROEM_LIVE_MOCK": scenario,
+            "PYTHONPATH": f"{REPO / 'tests'}{os.pathsep}{REPO / 'src'}",
+        },
+    )
+    assert report.exists(), result.stdout + result.stderr
+    outcomes: dict[str, str] = {}
+    for case in ET.parse(report).getroot().iter("testcase"):
+        kinds = [c.tag for c in case if c.tag in ("failure", "error", "skipped")]
+        outcomes[case.get("name", "")] = kinds[0] if kinds else "passed"
+    return _LiveRun(result, outcomes)
+
+
+def _neither(output: str) -> int:
+    """The hours the open-ended combined series reported as neither confirmed nor forecast."""
+    found = re.search(r"combined \(today\.\.\):.* neither (\d+)", output)
+    assert found, output
+    return int(found.group(1))
+
+
+# (scenario, the tests it skips, a report line proving the scenario's branch ran)
+PASSING_SCENARIOS: list[tuple[str, set[str], str]] = [
+    ("plain", set(), "address default: one address, forecast 48 hours"),
+    ("hole", set(), "combined cross-check:"),
+    ("gappy_forecast", set(), "forecast hours:"),
+    ("empty_forecast", set(), "forecast: EMPTY"),
+    ("two_addresses", set(), "2 addresses, ValueError as designed"),
+    ("no_prices", NEEDS_PRICES, "forecast:"),
+    (
+        "no_forecast",
+        NEEDS_FORECAST,
+        "address default: one address without forecast capability",
+    ),
+]
+FAILING_SCENARIO = "prices_not_found"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "skipped", "shows"),
+    PASSING_SCENARIOS,
+    ids=[scenario for scenario, _skipped, _shows in PASSING_SCENARIOS],
+)
+def test_every_live_test_passes_against_the_mock_in_every_shape_of_data(
+    tmp_path: Path, scenario: str, skipped: set[str], shows: str
+) -> None:
+    run = _run_live_suite(scenario, tmp_path)
+
+    output = run.result.stdout
+    assert run.result.returncode == 0, output
+    assert len(run.outcomes) == LIVE_TEST_COUNT, output
+    assert {n for n, o in run.outcomes.items() if o == "skipped"} == skipped
+    assert {o for n, o in run.outcomes.items() if n not in skipped} == {"passed"}
+    assert "MIN STRØM LIVE SUMMARY" in output
+    assert shows in output
+    if scenario in EXPECTED_NEITHER:
+        least, most = EXPECTED_NEITHER[scenario]
+        assert least <= _neither(output) <= most, output
+    # What the suite reports never includes the key, an address id or address text.
+    for private in (DUMMY_KEY, ADDRESS_ID, SECOND_ADDRESS_ID, "Testvej", "Test Net"):
+        assert private not in output
+
+
+def test_a_failed_live_request_reports_its_facts_but_never_the_address_id(
+    tmp_path: Path,
+) -> None:
+    run = _run_live_suite(FAILING_SCENARIO, tmp_path)
+
+    output = run.result.stdout
+    failed = {n for n, o in run.outcomes.items() if o == "failure"}
+    assert run.result.returncode == 1, output
+    # The probe catches the refusal and reports it; the rest of the price tests fail.
+    assert failed == NEEDS_PRICES - {"test_live_prices_future_to_probe"}
+    assert "PROBE /prices with to=+3 days: REFUSED, HTTP 404" in output
+    # Status, error code, reason and request id survive; the id does not, anywhere
+    # (not in the message, the chained httpx error or the assertion's own output).
+    for kept in (
+        "HTTP 404 resource_not_found on /me/addresses/<address>/prices",
+        "status=404",
+        "error_code=resource_not_found",
+        "reason='No prices for address <address>.'",
+        "request_id=req-",
+    ):
+        assert kept in output, kept
+    assert ADDRESS_ID not in output.lower()
+    assert DUMMY_KEY not in output
+    assert "direct cause" not in output
+    assert "During handling" not in output
+
+
+def test_every_scenario_of_the_mock_is_run_by_a_guard() -> None:
+    guarded = {scenario for scenario, _skipped, _shows in PASSING_SCENARIOS}
+
+    assert guarded | {FAILING_SCENARIO} == set(SCENARIOS)
+    assert FAILING_SCENARIO not in guarded
+
+
+def test_an_unknown_scenario_is_a_value_error_naming_it() -> None:
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="'sunny'"):
+        build_service("sunny", now, "test-key")
+
+
+@pytest.mark.parametrize(
+    "scenario", ["plain", "hole", "gappy_forecast", "two_addresses"]
+)
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime(2026, 3, 29, 0, 30, tzinfo=UTC),
+        datetime(2026, 10, 25, 22, 30, tzinfo=UTC),
+        datetime(2026, 10, 26, 12, 0, tzinfo=UTC),
+    ],
+    ids=["spring-change-day", "autumn-change-day", "ordinary-day"],
+)
+def test_each_scenario_makes_the_documented_combined_series_on_any_day(
+    scenario: str, now: datetime
+) -> None:
+    """The scenarios are laid out from the clock; DST days must not bend them."""
+    service = build_service(scenario, now, "test-key")
+    today = now.astimezone(ZoneInfo("Europe/Copenhagen")).date()
+    address_id = service.addresses[-1]["id"]
+
+    with service.client() as client:
+        combined = get_prices_with_forecast(today, address_id=address_id, client=client)
+
+    flags = combined["is_forecast"]
+    least, most = EXPECTED_NEITHER[scenario]
+    assert combined.index[0] == pd.Timestamp(today, tz="Europe/Copenhagen")
+    assert (combined.index.to_series().diff().dropna() == pd.Timedelta(hours=1)).all()
+    assert least <= int(flags.isna().sum()) <= most
+    assert flags.eq(True).sum() > 0
+    # Confirmed never follows forecast, whatever the holes.
+    hours = flags.index
+    assert (
+        hours[flags.eq(False).fillna(False).to_numpy(dtype=bool)].max()
+        < hours[flags.eq(True).fillna(False).to_numpy(dtype=bool)].min()
+    )
+
+
+def test_the_mocked_live_run_still_refuses_the_real_network_and_routes_clients(
+    tmp_path: Path,
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        """
+import asyncio
+
+import httpx
+import pytest
+
+from energydata.minstroem import MinStroemClient, get_addresses
+
+
+@pytest.mark.live
+def test_a_real_transport_is_refused():
+    async def go():
+        async with httpx.AsyncClient() as c:
+            await c.get("https://example.invalid/")
+
+    with pytest.raises(AssertionError, match="tried to reach the network"):
+        asyncio.run(go())
+
+
+@pytest.mark.live
+def test_a_client_made_with_no_transport_is_answered_by_the_mock():
+    with MinStroemClient() as client:
+        assert len(get_addresses(client=client)) == 1
+""",
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY, "MINSTROEM_LIVE_MOCK": "plain"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+def test_every_live_test_is_wrapped_to_keep_the_address_id_out_of_failures() -> None:
+    tree = ast.parse(
+        (REPO / "tests" / "test_minstroem_live.py").read_text(encoding="utf-8")
+    )
+    tests = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name.startswith("test_live_")
+    ]
+
+    assert len(tests) == 18
+    for node in tests:
+        names = {ast.unparse(d) for d in node.decorator_list}
+        assert "_anonymous_failures" in names, node.name
 
 
 def _called_names(path: Path) -> dict[str, set[str]]:
@@ -1007,7 +1273,12 @@ def test_structure_md_names_every_module_and_test_file_of_the_subpackage() -> No
 
     assert len(modules) == 7
     assert len(tests) == 8
-    for path in [*modules, *tests, "tests/fixtures/minstroem_openapi.json"]:
+    for path in [
+        *modules,
+        *tests,
+        "tests/fixtures/minstroem_openapi.json",
+        "tests/minstroem_live_mock.py",
+    ]:
         assert path in STRUCTURE, path
 
 
@@ -1023,6 +1294,7 @@ def test_the_minstroem_rules_file_names_every_public_function_and_module() -> No
         assert module in RULES, module
     assert "tests/test_minstroem_spec.py" in RULES
     assert "test_minstroem_live.py" in RULES
+    assert "tests/minstroem_live_mock.py" in RULES
 
 
 def test_the_stop_gates_structure_check_reports_nothing_for_this_subpackage() -> None:

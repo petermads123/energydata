@@ -2,10 +2,18 @@
 
 Every test is marked `live`, so plain `pytest` deselects them. Run them with
 `MINSTROEM_API_KEY` set and `-m live`; each adds a line to the end-of-run
-summary. Nothing here prints the key, an address text or an address id.
+summary. Nothing here prints the key, an address text or an address id: a failed
+request is reported with its status, error code, reason and request id and the
+address id replaced by `<address>`, because the output is pasted into a chat.
+
+The suite's own logic is run offline, against the in-repo mock, by
+`tests/test_minstroem_spec.py` through `tests/minstroem_live_mock.py`.
 """
 
+import functools
+import math
 import os
+import re
 import uuid
 from collections.abc import Callable, Iterator
 
@@ -26,6 +34,7 @@ from energydata.minstroem import (
     get_solar_export,
     get_solar_export_revenue,
 )
+from energydata.utils import RetryError
 
 pytestmark = [
     pytest.mark.live,
@@ -38,6 +47,54 @@ pytestmark = [
 type Report = Callable[[str], None]
 
 TZ = "Europe/Copenhagen"
+
+_ADDRESS_ID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _anonymous(text: str) -> str:
+    """`text` with every address id (a UUID) replaced by `<address>`."""
+    return _ADDRESS_ID.sub("<address>", text)
+
+
+def _describe(error: MinStroemError | RetryError) -> str:
+    """What a failed request says, without the address id.
+
+    A `MinStroemError` keeps its status, error code, reason and request id; the
+    message alone would name the address in the path it requested.
+    """
+    if isinstance(error, MinStroemError):
+        facts = (
+            f"status={error.status} error_code={error.error_code} "
+            f"reason={error.reason!r} request_id={error.request_id}"
+        )
+        return _anonymous(
+            f"a request failed: {type(error).__name__}: {error} [{facts}]"
+        )
+    return _anonymous(f"a request failed: {type(error).__name__}: {error}")
+
+
+def _anonymous_failures[**P, R](test: Callable[P, R]) -> Callable[P, R]:
+    """Fail a live test with the facts of a failed request but not the address id.
+
+    A `MinStroemError` (or a `RetryError`) puts the address id into the path in
+    its message, and the exception it was chained from puts it in the URL. The
+    output is pasted back into a chat, so the test fails with `_describe` instead,
+    with the chain suppressed and the original frames kept. Skips, assertion
+    failures and everything else pass through untouched.
+    """
+
+    @functools.wraps(test)
+    def run(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return test(*args, **kwargs)
+        except (MinStroemError, RetryError) as error:
+            raise AssertionError(_describe(error)).with_traceback(
+                error.__traceback__
+            ) from None
+
+    return run
 
 
 @pytest.fixture(scope="module")
@@ -94,6 +151,13 @@ def _hours_between(start: pd.Timestamp, end: pd.Timestamp) -> int:
     return int((end - start) / pd.Timedelta(hours=1))
 
 
+def _hours(flags: pd.Series, value: bool) -> pd.DatetimeIndex:
+    """The hours whose flag is `value`; an `<NA>` hour is neither true nor false."""
+    matches = flags.eq(value).fillna(False).to_numpy(dtype=bool)
+    return pd.DatetimeIndex(flags.index[matches])
+
+
+@_anonymous_failures
 def test_live_addresses_shape(
     live_client: MinStroemClient, live_report: Report
 ) -> None:
@@ -114,6 +178,7 @@ def test_live_addresses_shape(
     )
 
 
+@_anonymous_failures
 def test_live_forecast_prices(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -132,7 +197,7 @@ def test_live_forecast_prices(
         assert (forecast.index.to_series().diff().dropna() == pd.Timedelta("1h")).all()
         now = pd.Timestamp.now(tz=TZ)
         assert forecast.index[0] >= now.floor("h") - pd.Timedelta("1h")
-        assert forecast["total_price_per_kwh"].dropna().map(pd.notna).all()
+        assert forecast["total_price_per_kwh"].dropna().map(math.isfinite).all()
         live_report(
             f"forecast: {len(forecast)} hours {_span(forecast)}, region "
             f"{address['region']}, {forecast.attrs['currency']}, first "
@@ -143,10 +208,12 @@ def test_live_forecast_prices(
         live_report("forecast: EMPTY (the API returned no forecast rows)")
 
 
+@_anonymous_failures
 def test_live_prices_with_forecast_open_end(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
+    _need(address, "prices")
     start = _day(0)
 
     combined = get_prices_with_forecast(
@@ -160,23 +227,28 @@ def test_live_prices_with_forecast_open_end(
     ]
     assert combined.index[0] == start
     assert (combined.index.to_series().diff().dropna() == pd.Timedelta("1h")).all()
-    flags = combined["is_forecast"].tolist()
-    seen_forecast = False
-    for flag in flags:
-        if flag is True:
-            seen_forecast = True
-        assert not (seen_forecast and flag is False), "confirmed after forecast"
+    # An hour with neither a confirmed nor a forecast row is <NA>, which is
+    # neither True nor False: count with the Series, never with Python truthiness.
+    flags = combined["is_forecast"]
+    confirmed = int(flags.eq(False).sum())
+    forecasted = int(flags.eq(True).sum())
+    neither = int(flags.isna().sum())
+    assert confirmed + forecasted + neither == len(combined)
+    confirmed_hours, forecast_hours = _hours(flags, False), _hours(flags, True)
+    if len(confirmed_hours) and len(forecast_hours):
+        assert confirmed_hours.max() < forecast_hours.min(), "confirmed after forecast"
     live_report(
         f"combined (today..): {len(combined)} hours {_span(combined)}, "
-        f"confirmed {flags.count(False)}, forecast {flags.count(True)}, "
-        f"neither {len(flags) - flags.count(False) - flags.count(True)}"
+        f"confirmed {confirmed}, forecast {forecasted}, neither {neither}"
     )
 
 
+@_anonymous_failures
 def test_live_prices_with_forecast_closed_end(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
+    _need(address, "prices")
     start = _day(-1)
     end = _day(2)
 
@@ -192,6 +264,7 @@ def test_live_prices_with_forecast_closed_end(
     )
 
 
+@_anonymous_failures
 def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -209,8 +282,8 @@ def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
 
     total = "total_price_per_kwh"
     flags = combined["is_forecast"]
-    shown = combined.index[flags == False]  # noqa: E712 - a boolean-array compare
-    predicted = combined.index[flags == True]  # noqa: E712 - a boolean-array compare
+    shown = _hours(flags, False)
+    predicted = _hours(flags, True)
     pd.testing.assert_series_equal(
         combined.loc[shown, total],
         confirmed.loc[shown, total],
@@ -229,6 +302,7 @@ def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
     )
 
 
+@_anonymous_failures
 def test_live_forecast_hours_are_whole_local_hours_and_unique(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -252,6 +326,7 @@ def test_live_forecast_hours_are_whole_local_hours_and_unique(
     )
 
 
+@_anonymous_failures
 def test_live_prices_hour(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -270,6 +345,7 @@ def test_live_prices_hour(
     )
 
 
+@_anonymous_failures
 def test_live_prices_fifteen_minutes(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -292,6 +368,7 @@ def test_live_prices_fifteen_minutes(
     )
 
 
+@_anonymous_failures
 def test_live_prices_future_to_probe(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -312,6 +389,7 @@ def test_live_prices_future_to_probe(
 
 
 @pytest.mark.parametrize("aggregation", ["hour", "day", "month", "year"])
+@_anonymous_failures
 def test_live_consumption(
     live_client: MinStroemClient,
     address: dict[str, object],
@@ -342,6 +420,7 @@ def test_live_consumption(
     )
 
 
+@_anonymous_failures
 def test_live_solar_export(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -359,6 +438,7 @@ def test_live_solar_export(
     live_report(f"solar export day: {len(export)} rows")
 
 
+@_anonymous_failures
 def test_live_consumption_costs(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -379,6 +459,7 @@ def test_live_consumption_costs(
     )
 
 
+@_anonymous_failures
 def test_live_solar_export_revenue(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -399,6 +480,7 @@ def test_live_solar_export_revenue(
     )
 
 
+@_anonymous_failures
 def test_live_hourly_consumption_over_two_windows(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -416,6 +498,7 @@ def test_live_hourly_consumption_over_two_windows(
     )
 
 
+@_anonymous_failures
 def test_live_listed_address_id_works_as_listed(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
@@ -434,10 +517,12 @@ def test_live_listed_address_id_works_as_listed(
         client=live_client,
     )
 
-    assert frame.attrs["address_id"] == listed.lower()
+    requested_in_lower_case = frame.attrs["address_id"] == listed.lower()
+    assert requested_in_lower_case, "the request did not use the listed id, lower-cased"
     live_report(f"listed address id is lower-case: {listed == listed.lower()}")
 
 
+@_anonymous_failures
 def test_live_wrong_key_is_401_and_never_echoed(live_report: Report) -> None:
     wrong = "not-the-key-" + uuid.uuid4().hex
     real = os.environ[API_KEY_ENV]
@@ -447,12 +532,18 @@ def test_live_wrong_key_is_401_and_never_echoed(live_report: Report) -> None:
 
     error = caught.value
     assert error.status == 401
-    for text in (str(error), repr(error), repr(error.args), repr(client)):
-        assert wrong not in text
-        assert real not in text
+    shown = {
+        "str": str(error),
+        "repr": repr(error),
+        "args": repr(error.args),
+        "client repr": repr(client),
+    }
+    leaks = [where for where, text in shown.items() if wrong in text or real in text]
+    assert not leaks, f"a key appears in: {', '.join(leaks)}"
     live_report(f"wrong key: HTTP {error.status} {error.error_code}")
 
 
+@_anonymous_failures
 def test_live_unknown_address_is_403_or_404(
     live_client: MinStroemClient, live_report: Report
 ) -> None:
@@ -467,6 +558,7 @@ def test_live_unknown_address_is_403_or_404(
     )
 
 
+@_anonymous_failures
 def test_live_address_default(
     live_client: MinStroemClient, live_report: Report
 ) -> None:

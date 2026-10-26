@@ -13,16 +13,12 @@ from energydata.minstroem import MinStroemClient
 from energydata.utils import RetryPolicy
 
 
-@pytest.fixture(autouse=True)
-def _no_network(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Make every real httpx transport refuse, so no test can reach the network.
+def block_real_transports(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every real httpx transport refuse, so nothing can reach the network.
 
-    A test marked `live` is the one exception: it exists to call the real API.
+    `httpx.MockTransport` is untouched. Shared by the no-network guard and by the
+    plugin that runs the live suite against the mock.
     """
-    if request.node.get_closest_marker("live") is not None:
-        return
 
     def refuse_sync(
         _self: httpx.HTTPTransport, request: httpx.Request
@@ -36,6 +32,19 @@ def _no_network(
 
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse_sync)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse_async)
+
+
+@pytest.fixture(autouse=True)
+def _no_network(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Make every real httpx transport refuse, so no test can reach the network.
+
+    A test marked `live` is the one exception: it exists to call the real API.
+    """
+    if request.node.get_closest_marker("live") is not None:
+        return
+    block_real_transports(monkeypatch)
 
 
 MARKETS_FIXTURE = Path(__file__).parent / "fixtures" / "energidataservice_markets.json"

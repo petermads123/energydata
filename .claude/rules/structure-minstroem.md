@@ -96,8 +96,31 @@ live suite's wiring (run in a subprocess), the exports, the showcases and the do
 marked `live`, skipped without `MINSTROEM_API_KEY`, and plain `pytest` deselects it
 (`addopts = "-v -m 'not live'"`). It shares one module-scoped client; the address under test is
 `MINSTROEM_ADDRESS_ID` when set, else the first address with `forecastPrices`, else the first
-address; a test whose capability that address lacks is skipped naming the capability; each test
-adds a `live_report` line, never the key, an address text or an address id.
+address; a test whose capability that address lacks is skipped naming the capability (the
+combined-series tests need both `forecastPrices` and `prices`); each test adds a `live_report`
+line, never the key, an address text or an address id. The `is_forecast` column is read with
+Series methods (`eq`, `isna`), never Python truthiness, because an hour with neither source is
+`<NA>`. Every test is wrapped by the private decorator `_anonymous_failures`: a failed request
+(`MinStroemError`, `RetryError`) fails the test with its status, error code, reason and request
+id and every address id replaced by `<address>`, the chained error suppressed, because the output
+is pasted into a chat. The package's own messages are unchanged.
+
+`tests/minstroem_live_mock.py` is a pytest plugin that runs that live suite offline:
+`pytest -p minstroem_live_mock tests/test_minstroem_live.py -m live`, with a dummy
+`MINSTROEM_API_KEY`, `tests/` and `src/` on `PYTHONPATH` and the scenario in `MINSTROEM_LIVE_MOCK`.
+It routes every `MinStroemClient` (whatever `transport` it was given) to a `MinStroemService`
+and keeps every real httpx transport refusing, so the run cannot reach the network.
+`SCENARIOS` is `plain`, `hole`, `gappy_forecast`, `empty_forecast`, `no_prices`, `no_forecast`,
+`two_addresses` and `prices_not_found`; `build_service(scenario: str, now: datetime, api_key:
+str) -> MinStroemService` lays the data out around `now` (confirmed prices from three days back
+to tomorrow noon, a 48-hour forecast from the current hour, then the scenario's one bend: a
+missing confirmed hour, a forecast that starts after a gap and has holes and nulls, no forecast
+rows, an address without `prices` or `forecastPrices`, two addresses, a 404 from `/prices` with
+the address id in its reason); `ValueError` for an unknown scenario. `SECOND_ADDRESS_ID` is the
+second address of `two_addresses` and `SCENARIO_ENV` the variable's name. `tests/test_minstroem_spec.py`
+runs the suite once per scenario in a subprocess and asserts which tests pass or skip, that no key,
+address id or address text is in the output, and, for `prices_not_found`, that the failures keep
+their facts and lose the id.
 
 `tests/conftest.py` carries the support, imported by the suites with `from conftest import ...`:
 `ADDRESS_ID` (the default address UUID); `minstroem_address(address_id: str = ADDRESS_ID, label:
@@ -118,4 +141,7 @@ kept in `requests` and read back with `calls(suffix)` (a path *ends with* `suffi
 `MinStroemClient` on it with instant retries — the `minstroem_service` fixture (one address,
 every capability, generated rows), the `live_report` fixture (`live_report(line)` adds a line)
 and the `pytest_terminal_summary` hook printing the `MIN STRØM LIVE SUMMARY` block when any
-line was added. The autouse no-network guard lets a test marked `live` through.
+line was added. `block_real_transports(monkeypatch: pytest.MonkeyPatch) -> None` makes every
+real httpx transport refuse (`httpx.MockTransport` is untouched); the autouse no-network guard
+calls it for every test except one marked `live`, and the `minstroem_live_mock` plugin calls it
+for those.
