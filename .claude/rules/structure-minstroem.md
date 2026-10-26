@@ -2,6 +2,7 @@
 paths:
   - "src/energydata/minstroem/**"
   - "tests/test_minstroem_*.py"
+  - "tests/minstroem_live_mock.py"
   - "tests/fixtures/minstroem_openapi.json"
   - "tests/conftest.py"
 ---
@@ -100,27 +101,48 @@ address; a test whose capability that address lacks is skipped naming the capabi
 combined-series tests need both `forecastPrices` and `prices`); each test adds a `live_report`
 line, never the key, an address text or an address id. The `is_forecast` column is read with
 Series methods (`eq`, `isna`), never Python truthiness, because an hour with neither source is
-`<NA>`. Every test is wrapped by the private decorator `_anonymous_failures`: a failed request
-(`MinStroemError`, `RetryError`) fails the test with its status, error code, reason and request
-id and every address id replaced by `<address>`, the chained error suppressed, because the output
-is pasted into a chat. The package's own messages are unchanged.
+`<NA>`. Every test is wrapped by a private decorator: a failed request fails the test with an
+`AssertionError` instead, a `MinStroemError` showing its message, status, error code, reason and
+request id and a `RetryError` its message, with every address id (any UUID) replaced by
+`<address>` and the chained error suppressed, because the output is pasted into a chat. The
+package's own messages are unchanged.
 
 `tests/minstroem_live_mock.py` is a pytest plugin that runs that live suite offline:
 `pytest -p minstroem_live_mock tests/test_minstroem_live.py -m live`, with a dummy
-`MINSTROEM_API_KEY`, `tests/` and `src/` on `PYTHONPATH` and the scenario in `MINSTROEM_LIVE_MOCK`.
-It routes every `MinStroemClient` (whatever `transport` it was given) to a `MinStroemService`
-and keeps every real httpx transport refusing, so the run cannot reach the network.
-`SCENARIOS` is `plain`, `hole`, `gappy_forecast`, `empty_forecast`, `no_prices`, `no_forecast`,
-`two_addresses` and `prices_not_found`; `build_service(scenario: str, now: datetime, api_key:
-str) -> MinStroemService` lays the data out around `now` (confirmed prices from three days back
-to tomorrow noon, a 48-hour forecast from the current hour, then the scenario's one bend: a
-missing confirmed hour, a forecast that starts after a gap and has holes and nulls, no forecast
-rows, an address without `prices` or `forecastPrices`, two addresses, a 404 from `/prices` with
-the address id in its reason); `ValueError` for an unknown scenario. `SECOND_ADDRESS_ID` is the
-second address of `two_addresses` and `SCENARIO_ENV` the variable's name. `tests/test_minstroem_spec.py`
-runs the suite once per scenario in a subprocess and asserts which tests pass or skip, that no key,
-address id or address text is in the output, and, for `prices_not_found`, that the failures keep
-their facts and lose the id.
+`MINSTROEM_API_KEY`, `tests/` and `src/` on `PYTHONPATH`, the scenario in `MINSTROEM_LIVE_MOCK`
+(`SCENARIO_ENV`; `plain` when unset) and, optionally, the clock in `MINSTROEM_LIVE_NOW`
+(`NOW_ENV`). Its `pytest_configure() -> None` hook builds that scenario's service around the
+current time and patches `MinStroemClient.__init__` so every client, whatever `transport` it was
+given, is answered by it, with instant retries unless a `policy` is passed; a missing
+`MINSTROEM_API_KEY` is a `pytest.UsageError`. `pytest_unconfigure() -> None` restores the
+constructor and the clock, and an autouse fixture calls `block_real_transports` for every test,
+so the run cannot reach the network. `MINSTROEM_LIVE_NOW` is an ISO 8601 instant with an offset
+(`2026-06-15T12:00:00+02:00`; anything else, a naive time included, is a `pytest.UsageError`):
+when set, the data is laid out around it and `pandas.Timestamp.now` is fixed to it, so the
+package (the confirmed-price cap, `fetched_at`) and the live tests ("today") read the instant the
+data was built for. Unset or empty, the run uses the real clock, which is fine to look at by hand
+but races an hour or local midnight passing during the run. `SCENARIOS` is `plain`, `hole`,
+`gappy_forecast`, `empty_forecast`, `no_prices`, `no_forecast`, `two_addresses` and
+`prices_not_found`; `build_service(scenario: str, now: datetime, api_key: str) ->
+MinStroemService` lays the data out around `now` (confirmed prices from local midnight three days
+back to tomorrow noon, a 48-hour forecast from the current hour) and each scenario bends it:
+`hole` drops two confirmed hours (today 01:00, yesterday 05:00) and nulls the total at today
+03:00; `gappy_forecast` ends the confirmed prices at 02:00 today and serves the forecast over
+`[current hour + 2 h, current hour + 40 h)`, missing +5 h and +6 h, with a null total in its first
+row and a null variable charge at +7 h; `empty_forecast` has no forecast rows; `no_prices` /
+`no_forecast` give the one address no `prices` / `forecastPrices`; `two_addresses` adds
+`SECOND_ADDRESS_ID` as a second address, the only one that can forecast; `prices_not_found`
+answers `/prices` with a 404 whose reason holds the address id. `ValueError` for an unknown
+scenario. `tests/test_minstroem_spec.py` runs the suite once per scenario in a subprocess with the
+clock pinned (`PINNED_NOW`) and asserts which tests pass or skip, where the combined series runs
+its count of hours with neither source, a report line proving the scenario's branch ran, that no
+key, address id or address text is in the output, and, for `prices_not_found`, that the failures
+keep their facts and lose the id. It also runs `plain` with the clock on and the day after each
+daylight-saving change, and `hole` at local midnight; builds `plain`, `hole`, `gappy_forecast`
+and `two_addresses` in process on the spring and autumn change days and an ordinary day; and
+checks that under the plugin the clock is the pinned instant (and the real one when unset), a bad
+instant is refused, a real transport is still refused and a client made without a transport is
+answered by the mock.
 
 `tests/conftest.py` carries the support, imported by the suites with `from conftest import ...`:
 `ADDRESS_ID` (the default address UUID); `minstroem_address(address_id: str = ADDRESS_ID, label:

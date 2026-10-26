@@ -105,7 +105,8 @@ Modules: `src/energydata/minstroem/__init__.py` (re-exports the public names),
 `minstroem_address` and `minstroem_price_row` helpers, the `minstroem_service` and `live_report`
 fixtures, the live summary hook and `block_real_transports`; its no-network guard lets `live`
 tests through), `tests/minstroem_live_mock.py` (a pytest plugin, loaded with `-p`, that runs the
-live suite offline against the mock in eight scenarios of data),
+live suite offline against the mock in eight scenarios of data, with the clock pinnable by
+`MINSTROEM_LIVE_NOW`),
 `tests/fixtures/minstroem_openapi.json` (the published OpenAPI spec),
 `tests/test_minstroem_client.py`, `tests/test_minstroem_series.py`,
 `tests/test_minstroem_addresses.py`, `tests/test_minstroem_usage.py`,

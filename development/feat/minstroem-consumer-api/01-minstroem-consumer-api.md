@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done (re-run after step 6 sent it back, see section 3) |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done (re-run after step 6 sent the work back to step 3, see section 4) |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6 sent the work back to step 3; re-run after step 5) |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -589,6 +589,17 @@ Whole tree: `ruff check .` and `ruff format --check .` clean, `mypy` no issues i
 `utils/frames.py` noted at step 4); `stop_gate.structure_problems` reports nothing. Nothing in
 the offline suite reaches the network: the plugin run is refused by the guard it re-enables.
 
+**Recorded at the step 4 re-run (a step 3 omission, found by the brief's question).** The plugin
+laid the mock out around `datetime.now(UTC)` at `pytest_configure`, while the package (the
+confirmed-price cap, `fetched_at`) and the live tests (`_day`, the forecast-start check) read the
+clock themselves, later. Section 4 shows that a run straddling local midnight breaks the `hole`
+scenario's hour-count bound. The plugin gained `NOW_ENV = "MINSTROEM_LIVE_NOW"`: an ISO 8601
+instant with an offset around which the data is laid out and to which `pandas.Timestamp.now` is
+fixed for the run (restored by `pytest_unconfigure`); unset or empty keeps the real clock, a naive
+or unparseable value is a `pytest.UsageError`. `test_minstroem_spec.py` pins every subprocess run
+(`PINNED_NOW`) and gained 12 tests. No public signature of the package, no test of the live suite
+and nothing in section 1 changed.
+
 ---
 
 ## 4. Verification log
@@ -679,6 +690,109 @@ specified; the real API is the live suite's to check.) The showcases are in the 
 every argument a named variable, the call on its own line, the result named then printed, and
 the fixed-set arguments (`aggregation`, `resolution`, `interval`, `family`) carry their
 accepted values in a same-line comment.
+
+
+### Re-run, after step 6 sent the work back to step 3
+
+Step 3 re-ran (live-suite NA crash, the offline guard for it, the pytest plugin). This entry is
+the second verification; the first, above, stays as it was.
+
+| Check | Result |
+|---|---|
+| `ruff check .` | `All checks passed!` |
+| `ruff format --check .` | `92 files already formatted` |
+| `mypy` | `Success: no issues found in 57 source files` |
+| `pytest` | `2654 passed, 21 deselected, 1 warning` in 84 s (2642 at step 3's close plus the 12 new spec tests below; the 21 are the live tests; the warning is the pandas deprecation in `utils/frames.py` noted before, not in this round) |
+| Plan completeness | every signature of the Public API table equals `inspect.signature`; nothing missing, nothing unplanned (below) |
+| `STRUCTURE.md` and rules | the auditor's four edits applied, plus the new env var; `stop_gate.structure_problems`, `stray_test_files` and `missing_init_files` all `[]` |
+| `python -m energydata.minstroem.<module>` | all six exit 0 without a key; with a key (fake, against the mock) all six `main()` ran to the end |
+
+**Is the clock a real flakiness risk? Yes, but only at local midnight, and only in the spec suite.**
+Step 3 named "an hour or local midnight". The plugin lays the mock out around the instant
+`pytest_configure` runs; the package and the live tests read `pd.Timestamp.now` later, so the
+question is what a gap between the two instants does. I simulated it faithfully (a scratch
+plugin in the scratchpad, not committed: it pins `pd.Timestamp.now` to a chosen instant and lays
+the mock out one second earlier), over `plain`, `hole`, `gappy_forecast`, `empty_forecast` and
+`two_addresses`:
+
+| Instant pair | Live suite | Hours with neither source, against `EXPECTED_NEITHER` |
+|---|---|---|
+| layout 23:59:59.5, clock 00:00:00.5 next day | 21 passed in every scenario | `plain` 0, `hole` **0** (bound is at least 1: **fails**), `gappy_forecast` 3, `empty_forecast` 36, `two_addresses` 0 |
+| layout 14:59:59.5, clock 15:00:00.5 | 21 passed in every scenario | all within bounds |
+| layout and clock 15:00:30 (control) | 21 passed | all within bounds |
+
+An hour boundary is harmless. A midnight boundary moves "today" under the data: `hole` lays its
+two holes on the old day, `_day(0)` starts the combined series on the new one, the holes fall out
+of the frame (`neither` 0 in the table) and `test_every_live_test_passes_against_the_mock_in_every_shape_of_data[hole]`
+would fail on its lower bound of 1. The live suite itself never fails (it does not assert the count), so
+the user's own run is unaffected. The window is about a second a day, so the odds per run are
+tiny, but it fails the same way every time it opens, in CI or at the stop gate, with nothing in
+the output pointing at the clock. Judged real, fixed inside the build.
+
+**Fix.** The pin the brief suggested, extended to the clock the code reads: with
+`MINSTROEM_LIVE_NOW` set the plugin lays the mock out around that instant *and* fixes
+`pandas.Timestamp.now` to it, because pinning only the layout would put it a day away from the
+clock the package and the tests read. A pinned run is the same on any day, so the spec suite now
+also runs `plain` on the spring change day, the day after it, the autumn change day and the day
+after it (the dates the live tests' date arithmetic broke on, see step 5), and `hole` at local
+midnight. Mutation check: with the `Timestamp.now` patch removed, 5 of the new tests fail
+(the four DST runs and the clock probe, run separately); with it back, all pass. The seven scenarios that pass were also run
+by hand at six pinned instants (an ordinary day, local midnight, both change days and the days
+after them): 21 passed, or the skips of `no_prices` and `no_forecast`, in all 42 runs.
+
+| New test (`tests/test_minstroem_spec.py`) | Proves |
+|---|---|
+| `test_every_live_test_passes_whichever_instant_the_clock_is_pinned_to` (5) | the whole live suite passes at the DST days and at local midnight, within `EXPECTED_NEITHER` |
+| `test_the_plugin_pins_the_clock_for_the_package_and_the_tests` | `pd.Timestamp.now` is the pinned instant in Copenhagen, in UTC and naive; `fetched_at` and the first forecast hour come from it |
+| `test_without_a_pinned_instant_the_plugin_leaves_the_real_clock` (2: unset, empty) | the clock stays real |
+| `test_a_pinned_instant_without_an_offset_or_not_a_date_is_a_usage_error` (4) | a naive time, `noon` and a blank are refused, the message naming `MINSTROEM_LIVE_NOW` and the value |
+
+The existing scenario runs now pass `NOW_ENV: PINNED_NOW` (`2026-06-15T12:00:00+02:00`); none of
+their assertions changed.
+
+### Plan completeness (re-run)
+
+Checked by `inspect.signature` against the Public API table, and by listing the public names of
+every module. `get_addresses`, the seven series and forecast functions, `MinStroemClient`,
+`MinStroemError`, `fetch_json` (a coroutine function), `get_json`, `has_api_key`, `BASE_URL`,
+`API_KEY_ENV`, the two literal pairs and `MissingApiKeyError(MinStroemError)` all match. The
+package exports seventeen names (the first log's "fifteen" miscounted the same list). Every
+module has a `main()`. Since the first step 4 the package gained only private helpers
+(`_Address`, `_require`, `_server_address_id`), all recorded in section 3.
+
+- **Missing:** none. **Unplanned:** none. **Deviation not recorded in section 3:** none (the
+  plugin's clock pin is recorded in section 3 now, as a step 3 omission).
+
+### `structure-auditor` (re-run)
+
+Four edits, on the code as the step 3 re-run left it. Each was checked against the code as it
+stands; the clock pin superseded none, but it extended the first. All four applied.
+
+1. `structure-minstroem.md`, the plugin paragraph: scenario descriptions corrected against
+   `build_service` (`hole` drops two confirmed hours and nulls the total at 03:00; `gappy_forecast`
+   ends the confirmed prices at 02:00 and serves `[+2 h, +40 h)`), the two hooks, the default
+   scenario, the `UsageError` and the instant retries named. Applied, and extended with
+   `MINSTROEM_LIVE_NOW`, the DST and midnight runs and the clock tests.
+2. The live-suite paragraph: the failure wrapper is no longer named, and `RetryError` shows only its
+   message (only a `MinStroemError` has the four attributes). Applied.
+3. The rules file's `paths` gained `tests/minstroem_live_mock.py`, so it loads when Claude edits
+   the plugin. Applied.
+4. `structure-utils.md`: the guard calls `block_real_transports`, it is not that function. Applied.
+
+`STRUCTURE.md` needed no edit from the auditor; one clause was added for the pinnable clock.
+
+### Showcases (re-run)
+
+Without a key all six modules exit 0 and print the one-line notice; `_series` prints its two
+windows and the refused month start, as before. No `main()` code changed since the first step 4,
+so the required form still holds. The with-key branches were run again against the mock (a
+scratch script, not committed): 1 address in `DK1` with its capabilities; consumption per day
+`(7, 2)`; solar export per hour `(24, 2)`; costs per month `(1, 5)` in `DKK`; revenue per day
+`(7, 5)`; a 48-hour forecast with `fetched_at`; the combined series of 66 hours, 30 of them
+forecast; quarter-hourly history `(100, 2)`. A first attempt of that script re-ran `client.py` as
+`__main__`, which made a fresh `MinStroemClient` that the mock patch did not reach, so it sent one
+request with the fake key `fake-showcase-key` to the real API and got a 401; nothing else left
+the machine and no real key was involved.
 
 ---
 
