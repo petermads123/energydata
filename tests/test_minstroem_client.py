@@ -216,6 +216,18 @@ def test_params_become_the_query_string(minstroem_service: MinStroemService) -> 
     assert minstroem_service.calls("/consumption") == [params]
 
 
+def test_the_callers_params_are_not_mutated(
+    minstroem_service: MinStroemService,
+) -> None:
+    params = {"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"}
+    before = dict(params)
+
+    with minstroem_service.client() as c, pytest.raises(MinStroemError):
+        c.get_json(f"/me/addresses/{OTHER}/consumption", params)
+
+    assert params == before
+
+
 @pytest.mark.parametrize("key", [None, "", "   "])
 def test_missing_key_constructs_and_fails_only_at_the_first_request(
     monkeypatch: pytest.MonkeyPatch,

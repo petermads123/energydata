@@ -79,9 +79,19 @@ def _span(frame: pd.DataFrame) -> str:
     return f"{frame.index[0].isoformat()} .. {frame.index[-1].isoformat()}"
 
 
-def _today() -> pd.Timestamp:
-    """Today's Danish local date at midnight."""
-    return pd.Timestamp.now(tz=TZ).tz_localize(None).normalize().tz_localize(TZ)
+def _day(offset: int) -> pd.Timestamp:
+    """Local midnight `offset` calendar days from today.
+
+    Calendar arithmetic, not elapsed time: seven days back across a DST change is
+    local midnight, not 01:00, which a day interval would refuse.
+    """
+    today = pd.Timestamp.now(tz=TZ).tz_localize(None).normalize()
+    return (today + pd.DateOffset(days=offset)).tz_localize(TZ)
+
+
+def _hours_between(start: pd.Timestamp, end: pd.Timestamp) -> int:
+    """Elapsed hours in `[start, end)`: 23 or 25 for a DST day."""
+    return int((end - start) / pd.Timedelta(hours=1))
 
 
 def test_live_addresses_shape(
@@ -137,7 +147,7 @@ def test_live_prices_with_forecast_open_end(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
-    start = _today()
+    start = _day(0)
 
     combined = get_prices_with_forecast(
         start, address_id=address_id, client=live_client
@@ -167,8 +177,8 @@ def test_live_prices_with_forecast_closed_end(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "forecast_prices")
-    start = _today() - pd.Timedelta(days=1)
-    end = _today() + pd.Timedelta(days=2)
+    start = _day(-1)
+    end = _day(2)
 
     combined = get_prices_with_forecast(
         start, end, address_id=address_id, client=live_client
@@ -182,16 +192,76 @@ def test_live_prices_with_forecast_closed_end(
     )
 
 
+def test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
+    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+) -> None:
+    """Cross-check the combined series against the two endpoints it is made of."""
+    address_id = _need(address, "forecast_prices")
+    _need(address, "prices")
+    start = _day(-1)
+    end = _day(2)
+
+    combined = get_prices_with_forecast(
+        start, end, address_id=address_id, client=live_client
+    )
+    confirmed = get_prices(start, end, address_id=address_id, client=live_client)
+    forecast = get_forecast_prices(address_id=address_id, client=live_client)
+
+    total = "total_price_per_kwh"
+    flags = combined["is_forecast"]
+    shown = combined.index[flags == False]  # noqa: E712 - a boolean-array compare
+    predicted = combined.index[flags == True]  # noqa: E712 - a boolean-array compare
+    pd.testing.assert_series_equal(
+        combined.loc[shown, total],
+        confirmed.loc[shown, total],
+        check_freq=False,
+    )
+    pd.testing.assert_series_equal(
+        combined.loc[predicted, total],
+        forecast.loc[predicted, total],
+        check_freq=False,
+    )
+    if len(shown) and len(predicted):
+        assert shown.max() < predicted.min()
+    live_report(
+        f"combined cross-check: {len(shown)} confirmed hours match get_prices, "
+        f"{len(predicted)} forecast hours match get_forecast_prices"
+    )
+
+
+def test_live_forecast_hours_are_whole_local_hours_and_unique(
+    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+) -> None:
+    address_id = _need(address, "forecast_prices")
+
+    forecast = get_forecast_prices(address_id=address_id, client=live_client)
+
+    if forecast.empty:
+        live_report("forecast hours: EMPTY")
+        return
+    index = pd.DatetimeIndex(forecast.index)
+    assert index.is_unique
+    assert index.is_monotonic_increasing
+    assert (index.minute == 0).all()
+    assert (index.second == 0).all()
+    assert str(index.tz) == TZ
+    assert (forecast.index.to_series().diff().dropna() == pd.Timedelta("1h")).all()
+    live_report(
+        f"forecast hours: {len(forecast)} whole local hours, "
+        f"{int(forecast['total_price_per_kwh'].isna().sum())} without a total price"
+    )
+
+
 def test_live_prices_hour(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "prices")
-    start = _today() - pd.Timedelta(days=2)
-    end = _today()
+    start = _day(-2)
+    end = _day(0)
 
     prices = get_prices(start, end, address_id=address_id, client=live_client)
 
-    assert len(prices) in (47, 48, 49)
+    assert len(prices) == _hours_between(start, end)
     assert prices.attrs["resolution"] == "hour"
     live_report(
         f"prices hour: {len(prices)} rows {_span(prices)}, "
@@ -204,8 +274,8 @@ def test_live_prices_fifteen_minutes(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "prices")
-    start = _today() - pd.Timedelta(days=1)
-    end = _today()
+    start = _day(-1)
+    end = _day(0)
 
     prices = get_prices(
         start,
@@ -215,7 +285,7 @@ def test_live_prices_fifteen_minutes(
         client=live_client,
     )
 
-    assert len(prices) in (92, 96, 100)
+    assert len(prices) == 4 * _hours_between(start, end)
     live_report(
         f"prices 15 min: {len(prices)} rows, "
         f"{int(prices['total_price_per_kwh'].isna().sum())} NaN"
@@ -227,8 +297,8 @@ def test_live_prices_future_to_probe(
 ) -> None:
     """Report whether `/prices` accepts a `to` three days ahead; passes either way."""
     address_id = _need(address, "prices")
-    start = _today()
-    end = _today() + pd.Timedelta(days=3)
+    start = _day(0)
+    end = _day(3)
 
     try:
         prices = get_prices(start, end, address_id=address_id, client=live_client)
@@ -250,8 +320,8 @@ def test_live_consumption(
 ) -> None:
     address_id = _need(address, "consumption")
     start, end = {
-        "hour": (_today() - pd.Timedelta(days=2), _today()),
-        "day": (_today() - pd.Timedelta(days=7), _today()),
+        "hour": (_day(-2), _day(0)),
+        "day": (_day(-7), _day(0)),
         "month": (pd.Timestamp("2026-01-01", tz=TZ), pd.Timestamp("2026-04-01", tz=TZ)),
         "year": (pd.Timestamp("2025-01-01", tz=TZ), pd.Timestamp("2026-01-01", tz=TZ)),
     }[aggregation]
@@ -278,8 +348,8 @@ def test_live_solar_export(
     address_id = _need(address, "solar_export")
 
     export = get_solar_export(
-        _today() - pd.Timedelta(days=7),
-        _today(),
+        _day(-7),
+        _day(0),
         aggregation="day",
         address_id=address_id,
         client=live_client,
@@ -295,8 +365,8 @@ def test_live_consumption_costs(
     address_id = _need(address, "consumption_costs")
 
     costs = get_consumption_costs(
-        _today() - pd.Timedelta(days=7),
-        _today(),
+        _day(-7),
+        _day(0),
         aggregation="day",
         address_id=address_id,
         client=live_client,
@@ -315,8 +385,8 @@ def test_live_solar_export_revenue(
     address_id = _need(address, "solar_export_revenue")
 
     revenue = get_solar_export_revenue(
-        _today() - pd.Timedelta(days=7),
-        _today(),
+        _day(-7),
+        _day(0),
         aggregation="day",
         address_id=address_id,
         client=live_client,
@@ -333,13 +403,13 @@ def test_live_hourly_consumption_over_two_windows(
     live_client: MinStroemClient, address: dict[str, object], live_report: Report
 ) -> None:
     address_id = _need(address, "consumption")
-    start = _today() - pd.Timedelta(days=400)
-    end = _today()
+    start = _day(-400)
+    end = _day(0)
 
     usage = get_consumption(start, end, address_id=address_id, client=live_client)
 
     assert usage.index[0] == start
-    assert len(usage) >= 400 * 23
+    assert len(usage) == _hours_between(start, end)
     live_report(
         f"consumption hour over 400 days (2 windows): {len(usage)} rows, "
         f"{int(usage['energy_kwh'].isna().sum())} missing"
@@ -358,8 +428,8 @@ def test_live_listed_address_id_works_as_listed(
     listed = _need(address, "prices")
 
     frame = get_prices(
-        _today() - pd.Timedelta(days=1),
-        _today(),
+        _day(-1),
+        _day(0),
         address_id=listed,
         client=live_client,
     )

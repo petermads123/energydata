@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -200,7 +200,7 @@ for the requested interval, in order; a row the API did not return is NaN (float
 |---|---|---|---|
 | `BASE_URL: str = "https://api.minstroem.app/consumer/v1"` | `client.py` | The Consumer API root. | A7 |
 | `API_KEY_ENV: str = "MINSTROEM_API_KEY"` | `client.py` | The environment variable read when no key is passed. | A7, A8 |
-| `class MinStroemError(Exception)` with `__init__(self, message: str, *, status: int \| None = None, error_code: str \| None = None, reason: str \| None = None, request_id: str \| None = None) -> None` and attributes `status`, `error_code`, `reason`, `request_id` | `client.py` | An API error response or an exhausted retry or holdoff on a response (all four attributes from the response), a 2xx body that is not JSON or not a JSON object (`status` 200, `error_code` `None`), or any other check that fails (a payload whose fields or rows are not what the spec promises, an unusable key, a missing capability flag, sources disagreeing on currency or VAT): all four attributes `None`. `str()` is the message only. *(Corrected at step 4, see section 3.)* | A7 |
+| `class MinStroemError(Exception)` with `__init__(self, message: str, *, status: int \| None = None, error_code: str \| None = None, reason: str \| None = None, request_id: str \| None = None) -> None` and attributes `status`, `error_code`, `reason`, `request_id` | `client.py` | An API error response or an exhausted retry or holdoff on a response (all four attributes from the response), a 2xx body that is not JSON or not a JSON object (`status` 200, `error_code` `None`), or any other check that fails (a payload whose fields or rows are not what the spec promises (including a number that is not finite or too large, a timestamp out of range and a looked-up address id that is not a UUID), an unusable key, a missing capability flag, sources disagreeing on currency or VAT): all four attributes `None`. `str()` is the message only. *(Corrected at step 4, see section 3.)* | A7 |
 | `class MissingApiKeyError(MinStroemError)` | `client.py` | Raised by the first request when the client has no key; message names `API_KEY_ENV`. All four attributes `None`. | A7 |
 | `MinStroemClient(api_key: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `client.py` | `ApiClient` on `BASE_URL`. `api_key=None` reads `API_KEY_ENV` at construction; the key is stripped, and an empty result counts as none. A key that is not entirely `[\x21-\x7e]` (control characters, inner whitespace, non-ASCII) is kept out of the headers and refused at the first request with a `MinStroemError` saying the key has characters an HTTP header cannot carry — never echoing it. Never fails for a missing or bad key at construction. `max_concurrency < 1` is a `ValueError`. `__repr__` returns `MinStroemClient(key=set)` / `MinStroemClient(key=missing)` — never the key. Property `has_api_key: bool`. | A7 |
 | `async MinStroemClient.fetch_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | One `GET` through `ApiClient.request` with `Authorization: Bearer <key>`; returns the JSON object. Maps `httpx.HTTPStatusError`, and `RetriesExhaustedError`/`HoldoffTooLongError` that carry a response, to `MinStroemError` (chained) with status, `errorCode`, `reason` (from the body when it is the documented error object, else `None`) and `X-Request-ID`. A `RetriesExhaustedError` without a response (transport failure) propagates unchanged. A 2xx body that does not parse (`ParseError`) or is not a JSON object is a `MinStroemError` (`status` 200, `error_code` `None`), chained. `MissingApiKeyError` (or the bad-key `MinStroemError`) before any I/O. Only awaitable on the client's loop. | A7 |
@@ -466,6 +466,31 @@ Built as planned, with these small departures:
   that way because the plan's window table spans four years at usage `day`.
 - `STRUCTURE.md` and `structure-minstroem.md` already name the seven offline test files that
   step 5 writes, so the structure check reports them as missing until then.
+- *(Recorded at step 5; code changes the tests made necessary. Public signatures are
+  unchanged; the changes are private helpers and behaviour inside the planned contract.)*
+  - `_series._resolve_address` now returns a private `_Address(id, lacks)` instead of the id
+    string, with a private `_require(address, capability)`; `_Fetched` gained `starts`, the
+    starts of the rows the API returned.
+  - `get_prices_with_forecast` applies the shared rule to its second endpoint: with
+    `address_id=None` it checks the `prices` flag after the forecast fetch and before `/prices`
+    (guide step 9 and the shared rule; only when `/prices` is actually requested).
+  - The combined series counts an hour as confirmed when the API returned a confirmed row for
+    it, even a row of nulls (guide step 9: "the latest hour with a confirmed row"). Step 3 used
+    "total price not NaN", which let the forecast replace a confirmed row and discard its
+    variable charge, against A2's "confirmed winning any overlap".
+  - Payload checks refuse a number that is not finite (`NaN`, `Infinity`, which `read_json`
+    accepts) or too large for a float, a timestamp outside the nanosecond range, and a
+    looked-up address id that is not the hyphenated UUID form (it goes into a request path);
+    each is a `MinStroemError` with all four attributes `None`.
+  - Docstrings: `RetriesExhaustedError` added to the `Raises:` of the eight `get_*` functions
+    and `get_json`; the `end` argument of the four usage and cost functions says a lone
+    timestamp is refused for `day`/`month`/`year`; the costs `total_price_per_kwh` wording
+    follows the spec ("null at zero energy").
+  - Test support: `conftest.minstroem_price_row` added its hour in Copenhagen wall-clock time
+    (two hours across the autumn change); it now adds it in UTC. `tests/test_minstroem_live.py`
+    stepped days with `Timedelta(days=n)`, which lands at 01:00 across a DST change and is
+    refused for a day interval; it now steps on the calendar (`_day`), and two live tests were
+    added (the combined series cross-checked against its two endpoints; the forecast's hours).
 - No deviation touches section 1.
 
 ---
@@ -565,10 +590,116 @@ accepted values in a same-line comment.
 
 > Written in step 5: the dynamic half.
 
+Seven offline suites, 883 tests, none touching the network (the whole tree: 2618 passed,
+21 live tests deselected; `ruff check .`, `ruff format --check .` and `mypy` clean). The live
+suite (21 tests, two added) was run only against the in-repo mock through a scratch plugin kept
+out of the repo, to test its own logic: all 21 passed there, after the day-arithmetic fix below.
+It collects and skips cleanly with `-m live` and no key (21 skipped, none failed or erroring).
+`stop_gate.structure_problems` reports nothing.
+
 | Intent | Test names | Result |
 |---|---|---|
+| T1 forecast | `test_minstroem_prices.py`: `test_the_forecast_is_an_hourly_frame_with_gaps_and_nulls_as_nan`, `..._attrs_are_exactly_the_documented_four`, `test_an_empty_forecast_is_the_documented_empty_frame`, `test_a_single_forecast_row_...`, `..._autumn_change_are_25_...`, `..._spring_change_are_23_...`, `test_a_null_price_field_is_nan_with_the_row_kept`, `test_a_row_that_is_not_one_whole_hour_or_repeats_is_a_minstroem_error` (7 shapes), `test_a_forecast_response_with_the_wrong_resolution_currency_or_shape_is_an_error`, `test_the_forecast_capability_is_named_whichever_route_finds_it_missing`; `test_minstroem_series.py`: capability, id and lifecycle cases for `forecast` | green |
+| T2 combined | `test_minstroem_prices.py`: `test_confirmed_then_forecast_with_the_flag_and_confirmed_winning_the_overlap`, `..._a_confirmed_gap_before_the_last_confirmed_hour_is_not_filled_...`, `..._never_requested_beyond_local_midnight_two_days_ahead`, `..._wholly_beyond_the_cap_...`, `..._straddling_the_cap_...`, `test_without_an_end_it_runs_to_the_last_forecast_hour` (+ later confirmed rows), `test_with_an_end_the_frame_is_exactly_the_period_...`, `test_a_forecast_that_ends_before_the_start_gives_the_empty_frame_...`, `test_an_empty_forecast_runs_to_the_confirmed_cap`, `test_a_dst_day_is_25_or_23_confirmed_hours`, `test_forecast_rows_outside_the_period_are_dropped`, the null-price tests, `test_sources_that_disagree_on_currency_or_vat_are_an_error`, the capability tests, `test_a_confirmed_hour_never_follows_a_forecast_hour` | green |
+| T3 addresses | `test_minstroem_addresses.py` (49): every field and flag to its column, nulls `None`, text exact, order, empty frame with dtypes, 25 malformed shapes, extra keys ignored | green |
+| T4 address default | `test_minstroem_series.py`: `test_the_only_address_is_looked_up_once_and_used`, `..._skips_the_lookup`, zero and several addresses, non-UUID ids (11 forms) refused before key and request, canonical forms, server ids that are not UUIDs, all seven address-scoped functions | green |
+| T5 series | `test_minstroem_series.py`, `_usage.py`, `_costs.py`, `_prices.py`: index per interval incl. 23/25-hour and 92/100-quarter days, missing is NaN/`<NA>`, zero stays zero, dtypes, `attrs`, misaligned bounds (12 cases) before any request, `from`/`to`/interval parameters | green |
+| T6 windows | `test_a_period_over_the_cap_is_split_aligned_and_equals_one_unbounded_call` (13 table rows), `test_windows_end_on_calendar_boundaries_and_abut`, `test_every_window_touches_no_more_local_days_than_the_cap`, `test_usage_windows_never_touch_more_than_five_calendar_years`, per-family long-period tests | green |
+| T7 errors | `test_minstroem_client.py`: each documented status, all nine spec error examples (`test_minstroem_spec.py`), non-JSON bodies, 429 long and short `Retry-After`, exhausted 5xx, transport failure stays `RetriesExhaustedError`, non-object and non-JSON 2xx | green |
+| T8 key | `test_minstroem_client.py`: argument, environment (read once, stripped), `Bearer`, missing and blank key, unusable keys (7) never echoed in `str`/`args`/chain/traceback, 401 with either key absent from everything and captured output | green |
+| T9 lifecycle | `test_minstroem_series.py`: created client closed after success, error and missing key; passed client open and reusable; closed passed client is `RuntimeError` (8 functions each) | green |
+| T10 live wiring | `test_minstroem_spec.py`: deselected with a key set, collected with `-m live`, skipped with no key, the no-network guard exempts only `live`, summary block only when a line was reported (all in subprocesses, no network); the live suite covers every function, the forecast and combined most | green |
+| T11 contract | `test_minstroem_spec.py`: fields, nullability, enums, paths, query parameters, response shape, capability names, address columns against the spec; every request the eight functions make is a documented operation; the mock's bodies validate against the spec; the spec's own examples and error responses go through the package | green |
+| T12 docs | `test_minstroem_spec.py`: README names every function, class, column and the exact PowerShell line; `STRUCTURE.md` and the rules file name every module and test file; `stop_gate.structure_problems` clean; exports; `python -m` of all six modules | green |
+| T13 mock | `test_minstroem_series.py` (bottom): bearer, parameter validation, outward expansion, every cap at and over its limit (partial day counts, yearly cost across New Year refused), 404/422, sparse and generated rows, gaps, currency, forecast, overrides, request log | green |
+
+### Bugs the tests found and how each was fixed
+
+Each was red against the step 4 code (`62541b7`) and is green now; 15 new tests fail on the old
+code (checked by restoring it temporarily), and a 16-mutation spot check of the production code
+(window sizes, NaN fill, UTC/local, caps, the stitching rule, key pattern, strip, request id,
+capability text) left no survivor.
+
+| Finding | Class | Fix |
+|---|---|---|
+| `NaN`/`Infinity`/`1e999` in a number field passed `_number` (a present row became NaN, indistinguishable from a missing one); a 400-digit integer raised `OverflowError` | code bug | `_number` refuses non-finite and oversized numbers as `MinStroemError` |
+| A row `start` outside the ns range (`2300-...`) raised `OutOfBoundsDatetime` out of the call | code bug | the whole conversion is inside the `try` of `_timestamp` |
+| An address id from `/me/addresses` that is not a UUID went into the request path unchecked (`a/b` changed the path) | code bug vs the plan ("nothing can be smuggled into the path") | `_server_address_id` requires the hyphenated UUID form, else `MinStroemError`; used as sent |
+| `get_prices_with_forecast` with `address_id=None` on an address without `prices` sent a `/prices` request and relied on the 422 | code bug vs the shared rule | `_require(address, "prices")` before `/prices`, see below |
+| A confirmed row of nulls at the tail was replaced by the forecast, discarding its non-null variable charge | code bug vs A2 and guide step 9 | confirmed is "a row exists", see below |
+| `minstroem_price_row` produced a two-hour row across the autumn change | test-support bug | the hour is added in UTC (found by the 25-hour forecast test; the package's own "one whole hour" check was right to refuse it) |
+| Live tests stepped days with `Timedelta(days=n)`: 7 days before today crosses a DST change in late March and late October and lands on 01:00, so the `day` live tests (consumption, solar export, costs, revenue) would have raised `ValueError` on the user's run | test bug (never run until now) | `_day(offset)` steps on the calendar; the length checks are exact (`_hours_between`) instead of `in (47, 48, 49)`; pinned by a spec test |
+
+### The two decisions the brief singled out (judged on the record, no halt)
+
+**Address with `forecastPrices` but without `prices` (input-space 4, contract 3).** Section 2's
+shared rule is general: with `address_id=None` the function "checks the endpoint's flag before
+requesting it", and with an explicit id "the server's 422 mapping names it instead". The combined
+series requests two endpoints, so the rule applies to each; the planned outcome for a missing
+capability is an error naming it (A1 does the same for the forecast), and the guide's "without a
+forecast it is `get_prices`" covers only the forecast. A2 describes the output for an address
+that can supply both; it does not promise a forecast-only series for an address that cannot
+supply confirmed prices, and inventing one would be new behaviour rather than a reading of A2.
+So section 1 is not amended and nothing was guessed: the result is `MinStroemError` naming
+`'prices'` (status 422 with an explicit id, none from the pre-check), which the code already gave
+through the 422; the only deviation was the wasted `/prices` request, now removed. The check
+sits where `/prices` would be requested, so a period wholly beyond the confirmed cap (forecast
+only, no `/prices` request) works for such an address, exactly as it does with an explicit id
+(pinned by `test_without_the_prices_capability_a_period_that_needs_no_confirmed_price_still_works`).
+If the user would rather have a forecast-only series for such an address, that is a new
+criterion, not a fix.
+
+**Null totals in the combined series (input-space 3, contract 4).** A2: "confirmed prices
+wherever they exist, forecast only for hours after the last confirmed hour, confirmed winning any
+overlap"; guide step 9: "`last_confirmed` is the latest hour with a confirmed row". The concept
+also treats the data as sparse rows, where a missing *row* is unknown. Step 3 implemented
+"confirmed" as "total price not NaN", so a confirmed row with a null total lost to the forecast
+and its variable charge was discarded: that contradicts "confirmed winning any overlap" and the
+guide's "row". Settled by A2's wording, not a new decision: an hour is confirmed when the API
+returned a row for it, nulls and all. Symmetrically a forecast row of nulls is still a forecast
+hour (`is_forecast` `True`, prices NaN), and `<NA>` means neither source has a row. Pinned by
+`test_a_confirmed_row_of_nulls_is_still_the_confirmed_hour_and_wins_the_overlap`,
+`..._in_the_middle_is_confirmed_nan_not_forecast` and
+`test_a_forecast_row_with_a_null_total_is_forecast_with_a_nan_total`. The spec types the total as
+non-null, so this only matters for out-of-contract data.
+
+### Remaining contradictions, each judged
+
+| Report item | Judgement |
+|---|---|
+| Error chain overwritten on windowed paths (contract 1) | **Limit of reusing `utils`, not fixed here.** `_gather_ordered` re-raises `failures[...] from group_error`, replacing the failing window's `__cause__` (the `httpx` error) with an `ExceptionGroup` that contains the error itself. Status, code, reason and request id survive (A7 holds), no group escapes, and the direct, address and forecast paths keep their chain. `utils` is unchanged this round (plan); pinned by `test_a_windowed_failure_still_carries_the_http_error_of_a_single_request` so a change shows. Candidate `DEVELOPMENT.md` note for step 8. |
+| `RetriesExhaustedError` missing from `Raises:` (contract 2) | docstring gap, fixed in nine docstrings |
+| Lone timestamp refused for `day`/`month`/`year`, message names `end` (input-space 5, contract 8) | docstring gap, fixed (`end:` of the four usage and cost functions); the message names the derived bound and its value, left as is |
+| `total_price_per_kwh` "NaN at zero energy" (input-space 6) | the spec says the API sends null at zero energy; docstring reworded, code passes the API's value through (pinned) |
+| Open-ended frame stops at the last forecast hour even with later confirmed rows (contract 5) | intended, A2 as written ("without `end` it runs to the last forecast hour"); pinned by `test_without_an_end_the_frame_stops_at_the_last_forecast_hour_even_with_later_confirmed_rows` |
+| Blank explicit key does not fall back to the environment (contract 6) | intended, the docstring says only `None` reads it; pinned |
+| `repr` shows `key=missing` for an unusable key (contract 7, input-space 7) | intended, the plan defines two states; pinned |
+| Explicit ids canonicalised to lowercase, looked-up ids used as sent (contract 9) | intended and pinned; whether the real API is case-sensitive on ids is only the live suite's to say, and `test_live_listed_address_id_works_as_listed` is there for it |
+| `status` 200 for any unreadable 2xx (contract 10) | section 3, pinned |
+| `MinStroemClient(api_key=b"key")` raises `TypeError` (input-space 7) | a type-annotation violation, not a "bad key"; skipped |
+
+### Wrong expectations in my first draft of the tests (test fixed, not the code)
+
+Month offsets across the March change are `[1, 2, 2]`, not `[1, 1, 2]` (the change is on the
+29th); a request of 365 days plus one hour touches 366 days, which the mock accepts, so the
+over-cap control uses a longer period and the code's 365-day windows are the stricter reading; a
+partial first day counts for the cap, which fixed the arithmetic of the partial-day test; a
+duplicate-start error names the value but not the endpoint; `--collect-only -q` prints a tree
+because `addopts` has `-v`.
 
 Edge cases considered and deliberately skipped, with reasons:
+
+- **Which concurrent window's error wins** when two fail: not deterministic with a mock that
+  answers at once; the rule is `utils`' and `test_chunking.py` covers it.
+- **Purity of `start`/`end`:** they are immutable `str`/`date`/`datetime`; the only mutable
+  argument, `params`, has a test.
+- **Very long strings, unicode ids:** nothing in the code limits length; `uuid.UUID` and the
+  canonical-form comparison already reject non-canonical text (a non-ASCII digit is normalised
+  away or refused).
+- **The real API's behaviour** (cap counting, a future `to`, rounding, row order, id case): the
+  live suite only, on the user's machine; the offline suite proves the documented contract.
+- **Rate-limit pacing** (60/min, 2,000/day): by design the client only retries a 429.
+- **A client shared across threads:** `ApiClient`'s contract, covered by `test_api_client.py`.
 
 ---
 

@@ -839,14 +839,24 @@ def test_the_live_suite_covers_every_function_and_the_forecast_the_most() -> Non
         assert any(function in used for used in names.values()), function
     forecast = [t for t, used in names.items() if "get_forecast_prices" in used]
     combined = [t for t, used in names.items() if "get_prices_with_forecast" in used]
-    assert len(forecast) >= 3
-    assert len(combined) >= 2
+    assert len(forecast) >= 4
+    assert len(combined) >= 3
     others = [
         sum(function in used for used in names.values())
         for function in PUBLIC_FUNCTIONS
         if function not in ("get_forecast_prices", "get_prices_with_forecast")
     ]
-    assert len(forecast) >= max(others)
+    # The primary goal gets the most live tests: more than any other function.
+    assert len(set(forecast) | set(combined)) > max(others)
+
+
+def test_the_live_suite_steps_days_on_the_calendar_never_in_elapsed_time() -> None:
+    # `midnight - Timedelta(days=7)` is 01:00 after a DST change, which a day
+    # interval refuses; the live run would fail twice a year for no good reason.
+    text = (REPO / "tests" / "test_minstroem_live.py").read_text(encoding="utf-8")
+
+    assert "Timedelta(days" not in text
+    assert "DateOffset(days=offset)" in text
 
 
 def test_every_live_test_is_marked_live_and_skipped_without_a_key() -> None:
