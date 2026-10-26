@@ -1999,6 +1999,48 @@ def test_the_cross_check_survives_day_ahead_publication_between_its_requests(
     assert any("forecast moved during the run" in line for line in lines), lines
 
 
+def test_a_combined_forecast_of_hours_neither_snapshot_had_fails_the_cross_check(
+    pinned_clock: datetime,
+) -> None:
+    # A moving forecast excuses a value mismatch, not an invented hour.
+    service = build_service("plain", pinned_clock, DUMMY_KEY)
+    midnight = datetime(2026, 6, 14, 22, tzinfo=UTC)  # local midnight, 15 June
+    tomorrow = midnight + timedelta(days=1)
+    service.rows["prices"] = live_mock._hourly(midnight - timedelta(days=3), tomorrow)
+    states = [
+        live_mock._hourly(tomorrow, tomorrow + timedelta(hours=6)),
+        live_mock._hourly(
+            tomorrow + timedelta(hours=12), tomorrow + timedelta(hours=18)
+        ),
+        live_mock._hourly(
+            tomorrow + timedelta(days=1), tomorrow + timedelta(days=1, hours=6)
+        ),
+    ]
+    forecast_requests: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/forecast-prices"):
+            service.forecast = states[len(forecast_requests)]
+            forecast_requests.append(request)
+        return service(request)
+
+    address = live_suite._Address(
+        {"id": ADDRESS_ID, "forecast_prices": True, "prices": True}
+    )
+    client = MinStroemClient(
+        DUMMY_KEY,
+        policy=RetryPolicy(base_delay=0.0, max_delay=0.0),
+        transport=httpx.MockTransport(answer),
+    )
+
+    with client, pytest.raises(AssertionError, match="neither snapshot"):
+        live_suite.test_live_combined_series_is_confirmed_where_confirmed_and_forecast_after(
+            client, address, lambda _line: None
+        )
+
+    assert len(forecast_requests) == 3
+
+
 def test_a_forecast_that_holds_still_is_compared_value_for_value(
     pinned_clock: datetime,
 ) -> None:

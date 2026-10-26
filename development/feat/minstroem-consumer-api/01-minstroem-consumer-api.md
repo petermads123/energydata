@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,8 +17,8 @@
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done (re-run after step 6 sent it back, see section 3) |
 | 4 | Verify | `/verify` | in `/build` | done (re-run after step 6 sent the work back to step 3, see section 4) |
-| 5 | Test | `/test` | in `/build` | pending |
-| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6 sent the work back to step 3; re-run after step 5) |
+| 5 | Test | `/test` | in `/build` | done (re-run after step 6 sent the work back, see section 5) |
+| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6 sent the work back to step 3; re-run now) |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -492,6 +492,8 @@ Built as planned, with these small departures:
     refused for a day interval; it now steps on the calendar (`_day`), and two live tests were
     added (the combined series cross-checked against its two endpoints; the forecast's hours).
 - No deviation touches section 1.
+- *(Recorded at the step 5 re-run.)* No package code changed; the work is in the live suite, the offline
+  plugin and the test support, listed in section 5. Public signatures are unchanged.
 
 ### Re-run of step 3, sent back by step 6 (A8 partially unmet)
 
@@ -910,6 +912,155 @@ Edge cases considered and deliberately skipped, with reasons:
   live suite only, on the user's machine; the offline suite proves the documented contract.
 - **Rate-limit pacing** (60/min, 2,000/day): by design the client only retries a 429.
 - **A client shared across threads:** `ApiClient`'s contract, covered by `test_api_client.py`.
+
+### Re-run of step 5, after step 6 sent the work back (the live suite)
+
+Scope: the package's public functions are unchanged and were already well tested, so this pass
+is about what the user will run with a real key and paste back for approval (A8): the live suite
+(`tests/test_minstroem_live.py`), its offline plugin (`tests/minstroem_live_mock.py`) and
+`block_real_transports` in `conftest.py`. **No package code changed**; no public signature
+changed. Nothing was sent to the real API: every run went through the plugin (which refuses real
+transports) or the in-process mock. Two `test-designer` readers (`input-space`, `contract`) ran
+first; between them they found six certain defects in the live suite and plugin and a handful of
+suspicions. Every item was judged on the record below. Nothing amends section 1.
+
+**The PowerShell line is unchanged.** `--tb=short` stays; the README gained one sentence after
+the line (the output is clean under every `--tb` style, but `-l` / `--showlocals` prints every
+local, so do not add it) and the `MINSTROEM_ADDRESS_ID` note says any case works. The spec test
+that pins the line (`LIVE_COMMAND`) is untouched and passes.
+
+**Red first.** The guard tests were written before the fixes and run against the code as step 4
+left it (`0821b4f`), together with the existing request-id assertions rewritten for UUIDs:
+72 failed (23 in `test_minstroem_client.py`, 3 in `test_minstroem_series.py`, 46 in
+`test_minstroem_spec.py`), 661 passed. The 35 request-id failures are the old mock's `req-N`
+against assertions that now expect a UUID; the other 37 are the defects:
+
+| Defect (red run) | Evidence |
+|---|---|
+| `now.floor("h")` on a Copenhagen time raised in the repeated autumn hour | the three `repeated-hour-*` rows of `test_every_live_test_passes_whichever_instant_the_clock_is_pinned_to`: `test_live_forecast_prices` failed |
+| `test_live_address_default` failed on an account with no address | new scenario `no_addresses`: `ValueError: no addresses on this account` against `match="address_id"` |
+| `_anonymous` erased the request id (a UUID in the real API) as if it were an address | `test_a_failure_report_keeps_a_uuid_request_id_...`, `..._removes_an_address_id_the_reason_repeats`, `test_one_uuid_can_be_kept_whatever_its_case`, and the end-to-end `test_a_failed_live_request_reports_its_facts_...` (`request id <address>`) |
+| the plugin gave the mock the unstripped key, the client strips it: every request 401 | `test_the_plugin_accepts_a_padded_key_the_way_the_client_strips_it` (3) |
+| a blank key passed the plugin's check; the live module's `skipif` did not strip either | `test_the_plugin_refuses_a_missing_or_blank_key[blank, newline]`; `test_dash_m_live_with_a_blank_key_skips_every_test_like_no_key[space, tab-newline]` and `test_every_live_test_passes_with_a_key_that_has_whitespace_around_it` |
+| an unknown or empty `MINSTROEM_LIVE_MOCK` was an `INTERNALERROR` | `test_a_scenario_that_does_not_exist_is_a_usage_error_naming_the_variable` (4), `test_an_empty_scenario_variable_means_the_default_scenario` |
+| `MINSTROEM_LIVE_NOW` at the end of the calendar was an `INTERNALERROR` | `test_a_pinned_instant_the_data_cannot_be_laid_out_around_is_a_usage_error` |
+| `gappy_forecast` lost its gap for `now` in local `[00:00, 01:00)` | `test_the_gappy_forecast_starts_after_a_gap_at_any_time_of_day[00:00, 00:30, 00:59]`. The whole-suite rows at those times passed on the old code (the two forecast holes keep `neither` at 2), so the data-level test is the guard. |
+| module-scoped fixture setup ran before the transport block | `test_a_module_scoped_fixture_is_set_up_with_the_real_transports_already_refusing` |
+| `MINSTROEM_ADDRESS_ID` compared case-sensitively and unstripped, and never exercised offline | `test_the_address_named_by_minstroem_address_id_is_the_one_under_test[upper-case-id, padded-id]` |
+| the anonymity promise held only under `--tb=short` | `test_no_traceback_style_shows_the_key_an_address_id_or_the_address_text[auto, long]`: the `address` fixture and the request path were printed. A hand run at the same point showed `address = {'id': '5b0ac4d2-...', 'label': 'Home', 'formatted_address': 'Testvej 1, 1000 Testby', ...}` and the id as a frame argument. |
+| the cross-check assumed one snapshot across day-ahead publication | `test_the_cross_check_survives_day_ahead_publication_between_its_requests`: `KeyError` / failed assert on hours the later forecast no longer holds |
+| the probes inherited `MINSTROEM_LIVE_MOCK` / `MINSTROEM_LIVE_NOW` from the shell | shown by hand (the strip list changed in the same edit as the test): the real-clock probe with `MINSTROEM_LIVE_NOW=2001-01-01T00:00:00+00:00` exported fails; the fix is the strip list of `_pytest`, pinned by `test_probes_do_not_inherit_plugin_variables_left_in_the_shell` |
+| the mock sent `req-N` request ids although the spec types the header `format: uuid` | `test_the_mocks_request_ids_are_uuids_like_the_specs_header` |
+| `_describe`/`_anonymous_failures` helpers, the `<address>` repr types | new in-process tests (red: attribute errors on the old code) |
+
+Not red on the old code, written as regression guards (the designers expected them green):
+`test_unconfiguring_the_plugin_restores_...` (1 and 2 configure cycles),
+`test_a_pinned_instant_is_read_in_any_offset_form_and_becomes_utc` (4) and the two refusals,
+`test_the_forecast_is_laid_out_on_utc_hours_whatever_the_offset_of_now` (2),
+`test_the_plugin_routes_a_client_given_a_real_transport_and_refuses_sync_httpx`,
+`test_the_block_names_the_url_spares_mock_transports_and_is_undone_after_each_test`,
+`test_hours_treats_an_unknown_flag_as_neither_and_keeps_the_zone`, `test_every_form_of_an_address_id_is_replaced` (7),
+`test_other_exceptions_pass_through_a_live_test_untouched` (3),
+`test_the_package_and_the_live_suite_read_the_clock_only_through_timestamp_now`, and the
+`gappy_forecast` rows at 01:00, 12:00 and 23:30.
+
+**What changed (all in test support and the live suite).**
+
+- `tests/test_minstroem_live.py`: `now` is floored in UTC; `_anonymous(text, *, keep=None)` keeps
+  one UUID (the request id) and `_describe` passes `error.request_id`; `_anonymous_failures` raises
+  with the traceback cut at the test's own frame (`_test_frame`), because the package's frames
+  carry the request path as an argument and `--tb=long` prints it; `_Address(dict)` and
+  `_Private(str)` have `repr`s `<address>` and `<private>`, so a report of a frame's arguments (the
+  `address` fixture, the id from `_need`, the keys) shows nothing; the `address` fixture matches
+  `MINSTROEM_ADDRESS_ID` without regard to case or space; `skipif` and the wrong-key test strip the
+  key; `test_live_address_default` expects a `ValueError` for no address as well as for several and
+  asserts on a computed boolean (the message for several lists every id and label); the
+  cross-check makes four requests (forecast, combined, prices, forecast), always compares the
+  confirmed hours, compares the forecast value for value only when it is the same before and
+  after, and otherwise requires the hours to be in one of the two snapshots and says so in its
+  report line. The module docstring says what it promises and what defeats it (`-l`).
+- `tests/minstroem_live_mock.py`: the key is stripped and a blank one is a `pytest.UsageError`; an
+  unknown scenario is a `UsageError` naming `MINSTROEM_LIVE_MOCK` and the value, an empty one is
+  `plain`; an instant the data cannot be laid out around is a `UsageError`; real transports are
+  blocked in `pytest_configure` (the per-test autouse fixture is gone, it is redundant);
+  `pytest_unconfigure` restores them; new scenario `no_addresses`; `gappy_forecast` confirmed
+  prices end at `min(02:00 today, current hour)`; the docstring says its offsets are elapsed hours.
+- `tests/conftest.py`: `minstroem_request_id(number)` and the mock's `X-Request-ID` is that UUID;
+  `_no_network`'s docstring says a module- or session-scoped fixture is set up before it.
+- `tests/test_minstroem_client.py`, `test_minstroem_series.py`: the mock-derived `req-N`
+  assertions use `minstroem_request_id` (the two `MinStroemError(request_id="req-1")` that build an
+  error by hand are unchanged).
+- `README.md`, `STRUCTURE.md`, `.claude/rules/structure-minstroem.md`: the sentence on `-l`, the
+  address-id case, the helper, the ninth scenario and the plugin's behaviour.
+
+**New tests (72 more than at the step 4 close, 2654 to 2726; all in `tests/test_minstroem_spec.py`, plus the
+rewritten request-id assertions in the client and series suites).**
+
+| Group | Proves |
+|---|---|
+| Plugin refusals (key, scenario, instant) | a missing/blank key, an unknown scenario or an out-of-range instant is a clean `UsageError` (exit 4, naming the variable and value, no `INTERNALERROR`); an empty scenario is `plain`; a padded key works; every offset form of the instant becomes UTC |
+| Environment | the probes ignore `MINSTROEM_LIVE_MOCK` / `MINSTROEM_LIVE_NOW` left in the shell |
+| Plugin mechanics | set up and torn down in process (client, clock, both transports restored, twice in a row); the module-scoped-fixture gap closed; a client given a real transport is still answered by the mock and sync `httpx` refused; `block_real_transports` names the URL, spares `MockTransport` and does not outlive its test |
+| Data | `gappy_forecast` has its gap at six times of day; the forecast lies on UTC hours for any offset of `now`; the whole live suite passes in both passes of the repeated autumn hour and on the hour |
+| Whole-suite variants | a padded key; the `no_addresses` scenario (17 skip naming the account, the other 4 pass); `MINSTROEM_ADDRESS_ID` as the cannot-forecast address, upper case, padded and unknown; no key, id or address text under `--tb=short/auto/long/native`; a blank key skips like none (3) |
+| Summary (inside the existing scenario test, one row per scenario) | one line per test that reported, and for `plain` the four lines that matter, exactly, at the pinned instant |
+| Live-suite helpers, in process | a failure report keeps a UUID request id and removes only the address id, whatever its case or place; a `RetryError` becomes an anonymous assertion at the test frame only; skips, assertions and interrupts pass through; `_hours` treats `<NA>` as neither; `_Address` / `_Private` show nothing; the cross-check survives a publication between its requests and still compares values when the forecast holds still; the README and the module docstring name `--showlocals`; the mock's request ids are UUIDs as the spec's header is; the package and the live suite read the clock only through `pd.Timestamp.now` |
+
+**Mutation checks.** The red run is the mutation check of the fixes themselves: the old code is
+the mutant, and every defect in the table failed at least one new test. Two mutations of the new
+cross-check were run by hand on top of the fix: forcing `held_still` true makes the publication
+test fail (`forecast hours not in the forecast`), and comparing the forecast against `+ 1` makes
+the `plain` whole-suite row and `test_a_forecast_that_holds_still_is_compared_value_for_value`
+fail; removing the "in neither snapshot" assertion makes
+`test_a_combined_forecast_of_hours_neither_snapshot_had_fails_the_cross_check` fail (a moving forecast
+excuses a value mismatch, not an invented hour).
+
+**Whole tree.** `ruff check .` and `ruff format --check .` clean (92 files), `mypy` no issues in
+57 files, `pytest` `2726 passed, 21 deselected, 1 warning` in about 2 minutes (2654 before this
+pass; the warning is the pandas deprecation in `utils/frames.py` noted at step 4). A hand sweep (not
+committed) of the eight passing scenarios at eleven awkward instants (midnight, 23:59:59, both
+sides of each DST change, both passes of the repeated hour, New Year) gave 88 runs and no
+failure. `stop_gate.structure_problems`, `stray_test_files` and `missing_init_files` all `[]`.
+
+### Both readers' items, judged
+
+| Item | Judgement |
+|---|---|
+| `floor("h")` in the repeated hour (contract 1) | **Bug in the live suite, fixed** (UTC floor), pinned by three whole-suite rows |
+| zero addresses fails `test_live_address_default` (contract 2) | **Bug in the live suite, fixed**; new scenario `no_addresses` |
+| request id erased (input-space 1, contract 3) | **Bug in the live suite, fixed**; the mock now emits UUIDs so the next such bug cannot hide |
+| key not stripped by the plugin / `skipif`, blank key passes (input-space 2 and 6, contract 8) | **Bugs, fixed** |
+| bad / empty scenario is `INTERNALERROR` (input-space 5, contract 14) | **Fixed**; empty is `plain`, as the rules file said |
+| probes inherit the shell's plugin variables (input-space 3) | **Fixed** in `_pytest` |
+| `gappy_forecast` gap vanishes at local `[00:00, 01:00)` (input-space 4) | **Fixed** |
+| module-scoped fixture before the block (contract 6) | **Fixed for the plugin**; see below for `_no_network` |
+| `MINSTROEM_ADDRESS_ID` untested and case-sensitive (contract 5) | **Fixed and tested**; the package accepts an explicit id in any case, the suite now does too |
+| cross-check assumes one snapshot (contract 7) | **Flake risk on real data, fixed** |
+| anonymity only under `--tb=short` (contract 4) | **Fixed for every `--tb` style**; `--showlocals` cannot be defended and is documented in the docstring and the README |
+| unconfigure, `RetryError` branch, pass-through, pinned forms, `_hours`, UTC layout, routing, block semantics, summary (input-space 7 to 15, contract 9, 10, 12, 13) | **Tests written**, green on the old code except where listed above |
+| clock read only through `Timestamp.now` (input-space 10, contract 11) | **Static test written** (green); the pin patches only that call |
+| `at()` adds elapsed hours, so "02:00 today" / "tomorrow noon" are an hour off wall-clock on a change day (input-space contradiction 6, contract 15) | **Wording, not a bug**: the docstring and the rules file now say elapsed hours. Changing `at()` to wall-clock would move the existing DST-day expectations for no benefit, and the scenarios keep their shape. Not pinned by a test. |
+| extreme `MINSTROEM_LIVE_NOW` (input-space suspicion 7a) | **Fixed** (`UsageError`) |
+
+Edge cases considered and deliberately skipped, with reasons:
+
+- **Hardening `_no_network` against module- and session-scoped fixtures** (contract 6 says the
+  same gap exists there). The guard is function-scoped on purpose: it must be able to let a
+  `live` test through, which a session-wide block cannot, and a hook-based rewrite would touch
+  every one of 2,700 tests for a hazard no offline fixture here has (none builds a transport).
+  The docstring now says so. The plugin, where the live suite's own module-scoped fixture does
+  make a request, is closed.
+- **The 32-hex (hyphenless) form of an address id** (input-space 11, suspicion row): the spec
+  types ids `format: uuid`; the package refuses any other form.
+- **Address text inside the API's own `reason`**: the suite cannot know it and the documented error
+  reasons are generic; only the address id is replaced.
+- **A package `ValueError` or `KeyError` carrying an id**: the live suite never passes an id the
+  package would refuse (ids come from the listing), and only `MinStroemError` / `RetryError` carry
+  a path.
+- **`--showlocals`**: not defendable (every local is printed); documented in the docstring and the
+  README instead.
+- **Real-API behaviour** (a forecast refresh between two requests, rounding, row order): the live
+  run only. The cross-check no longer fails on a moving forecast; it says so in its report line.
 
 ---
 
