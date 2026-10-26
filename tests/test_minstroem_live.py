@@ -346,6 +346,28 @@ def test_live_hourly_consumption_over_two_windows(
     )
 
 
+def test_live_listed_address_id_works_as_listed(
+    live_client: MinStroemClient, address: dict[str, object], live_report: Report
+) -> None:
+    """The id from `get_addresses` is accepted by the series endpoints as listed.
+
+    The package sends an explicit id in its canonical lowercase form; if the API
+    issues upper-case ids and compares them case-sensitively, this is the test
+    that would show a 404.
+    """
+    listed = _need(address, "prices")
+
+    frame = get_prices(
+        _today() - pd.Timedelta(days=1),
+        _today(),
+        address_id=listed,
+        client=live_client,
+    )
+
+    assert frame.attrs["address_id"] == listed.lower()
+    live_report(f"listed address id is lower-case: {listed == listed.lower()}")
+
+
 def test_live_wrong_key_is_401_and_never_echoed(live_report: Report) -> None:
     wrong = "not-the-key-" + uuid.uuid4().hex
     real = os.environ[API_KEY_ENV]
