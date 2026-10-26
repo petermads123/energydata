@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 4 | Verify | `/verify` | in `/build` | done (re-run after step 6 sent the work back to step 3, see section 4) |
 | 5 | Test | `/test` | in `/build` | done (re-run after step 6 sent the work back, see section 5) |
 | 6 | Concept check | `/concept-check` | in `/build` | done (second audit in section 6, after the first sent the work back to step 3) |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -1253,8 +1253,89 @@ the spec suite's 18 docs tests re-run clean.
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | 29 before this one (listed below, oldest first), plus `Ship: Min Strøm Consumer API, with price forecasts first`, the last commit of the round |
+| Pushed to | `origin/feat/minstroem-consumer-api` (`https://github.com/petermads123/energydata`, a **public** repository). Every earlier step had already pushed; at the start of this step `HEAD` and `origin/feat/minstroem-consumer-api` were both `258b545`. |
+
+### Gates on the whole tree
+
+Run at `258b545`, clean working tree, no `MINSTROEM_*` variable set, no Min Strøm key in the
+environment.
+
+| Gate | Result |
+|---|---|
+| `ruff check .` | `All checks passed!` |
+| `ruff format --check .` | `92 files already formatted` |
+| `mypy` | `Success: no issues found in 57 source files` |
+| `pytest` | `2726 passed, 21 deselected, 1 warning in 120.74s` (the 21 are the live tests, deselected by `addopts`; the warning is the pandas deprecation in `utils/frames.py` noted at step 4, not in this round) |
+
+Plan file agrees: steps 1 to 6 `done`; section 6's second audit has A1 to A9 all met, none unmet
+(the first audit's A8 was sent back, fixed and re-audited); section 5 has a test against every
+intent T1 to T13.
+
+### Review of what the round committed
+
+`git diff main...HEAD --stat`: 25 files, 13,960 insertions, 14 deletions. The repository is
+public, so the diff was read for anything a stranger should not see.
+
+| Question | Finding |
+|---|---|
+| Stray files (scratch scripts, sample data, temp material) | None. All 25 files are planned: the seven `src/energydata/minstroem/` modules, `tests/conftest.py`, the spec fixture, the eight `tests/test_minstroem_*.py` and `tests/minstroem_live_mock.py`, `pyproject.toml`, the README, `STRUCTURE.md`, three rules files and this plan. `git status --ignored` shows nothing outside the venv and caches. No file was ever added and later removed on the branch (every file any commit touched is in the final diff; no deletion or rename in history). |
+| `tests/minstroem_live_mock.py` | Committed on purpose, not scratch: section 3 records it, `STRUCTURE.md` and `structure-minstroem.md` name it, `test_minstroem_spec.py` imports and drives it. It is a pytest plugin that loads **only** through an explicit `-p minstroem_live_mock`; `addopts`, `conftest.py` (no `pytest_plugins`) and the README live line do not load it, so the user's real live run cannot be redirected to the mock. It reads the environment and never writes a file or opens a socket. The concept check's scratch plugins stayed in the scratchpad and are not in the repo or its history. |
+| Keys | None. The only key values in the diff are `test-key`, `wrong-from-env`, `dummy-key-for-the-offline-live-run` and similar test strings, and the README placeholder `<din-nøgle>`. No `Bearer` token other than `Bearer test-key`; no token shape (`sk-`, `ghp_`, `github_pat_`, `AKIA`, JWT) anywhere. |
+| Address ids and address text | No real id. The only ids are the spec's own published example id `2b4bf7a8-b5d0-45ab-8d42-3a5688bba167` (14 times in the spec fixture, as the `OTHER` constant in three test files and once in the spec test), three patterned fixtures (`5b0ac4d2-3c5e-…-0a6f5a1b2c3d`, `0e8d1c3a-7b49-…`, `9f1c2d3e-4b5a-…-0a1b2c3d4e5f`) and four `00000000-0000-4000-8000-00000000000N` request ids. Address text is `Testvej 1, 1000 Testby` and the label `Home`/`Flat`. |
+| Personal data and local paths | None: no e-mail address, user name, `/home/user` or `C:\Users` path in any added line. All 29 commits are authored `Claude <noreply@anthropic.com>`. The hostnames are the documented ones (`api.minstroem.app`, `docs.minstroem.app`, `example.invalid`, the sources the README already named). |
+| The fake-key request of step 4 | The scratch script is **not** committed, in the tree or in any commit (`git log --all -S` finds the string in one commit only, `0821b4f`, and only in this plan file). What is committed is one prose sentence in section 4 saying that a first attempt of the showcase script sent one request with the fake key `fake-showcase-key` to the real API and got a 401. The string is invented, not a credential; it is left as the honest record and is already on the remote. |
+| A step that committed nothing | None. Concept `c355308`, Plan `0d1f48b`, Implement `d52a11a`, Verify `62541b7`, Test `9b1e56d`, Concept check `b6b3b04`, and for the re-run of 3 to 6 `e147468`, `0821b4f`, `5c2b078`, `258b545`: each touches this file. (The step 3 commits carry the subjects `Add Min Strøm Consumer API subpackage with price forecasts` and `Run the live Min Strøm suite offline, and fix its NA crash` rather than `Implement:`; the record is there.) |
+| Base | `main` is `d197471` locally and on `origin`; the branch is 29 commits ahead and 0 behind. |
+
+Nothing was removed or changed by this review.
+
+### What the user runs
+
+The live suite has never run against the real API; it ran only against the in-repo mock. With a
+Min Strøm Plus key, from the repo root, in PowerShell (the line `README.md` carries and
+`test_minstroem_spec.py` pins):
+
+```powershell
+$env:MINSTROEM_API_KEY='<din-nøgle>'; .venv\Scripts\python.exe -m pytest tests/test_minstroem_live.py -m live -rA --tb=short -p no:cacheprovider; Remove-Item Env:MINSTROEM_API_KEY
+```
+
+It sends about 31 requests (limit 60 a minute), prints a `MIN STRØM LIVE SUMMARY` block and one
+outcome line per test, and does not print the key, the address id or the address text. Do not
+add `-l` / `--showlocals`. Paste the output back.
+
+### Commits of the round (oldest first)
+
+- `c355308` Concept: Min Strøm Consumer API, with price forecasts first
+- `69abfc7` Plan: Min Strøm Consumer API, with price forecasts first (draft, critique pending)
+- `0d1f48b` Plan: Min Strøm Consumer API, with price forecasts first
+- `55db4e8` WIP step 3: minstroem client, series path and endpoint modules
+- `01e0e58` WIP step 3: live marker, Min Strøm mock service and live suite
+- `d52a11a` Add Min Strøm Consumer API subpackage with price forecasts
+- `59d1d81` WIP step 4: sync structure docs with the code
+- `62541b7` Verify: Min Strøm Consumer API, with price forecasts first
+- `6282e50` WIP step 5: harden payload checks, prices pre-check, row-based confirmed hours
+- `33aee35` WIP step 5: client suite (error mapping, key handling, 2xx bodies, showcase)
+- `68751c2` WIP step 5: series suite (shared path, windows, address resolution, lifecycle, mock service)
+- `faa31e2` WIP step 5: addresses suite
+- `8f0bc6e` WIP step 5: usage suite
+- `2b09be9` WIP step 5: costs and revenue suite
+- `75070af` WIP step 5: prices and spec suites; fix hourly row helper across DST
+- `5bc5e8d` WIP step 5: fix a typo in the spec suite's collect check
+- `5c38af8` WIP step 5: live test that the listed address id is accepted as listed
+- `9b1e56d` Test: Min Strøm Consumer API, with price forecasts first
+- `61931f9` WIP step 6: apply the structure-auditor's four doc fixes
+- `b6b3b04` Concept check: Min Strøm Consumer API, with price forecasts first
+- `6bcfa43` WIP step 3: live suite counts <NA> with the Series, offline guard for it
+- `e147468` Run the live Min Strøm suite offline, and fix its NA crash
+- `54962cd` WIP step 4: pin the clock in the offline live run
+- `0821b4f` Verify: Min Strøm Consumer API, with price forecasts first
+- `0f18417` WIP step 5: harden the live suite and its offline plugin
+- `d93e369` WIP step 5: docs for the live-suite changes, trim the guard's slowest rows
+- `5c2b078` Test: Min Strøm Consumer API, with price forecasts first (re-run for the live suite)
+- `271ab55` WIP step 6: apply the structure-auditor's five doc fixes (re-run)
+- `258b545` Concept check: Min Strøm Consumer API, with price forecasts first
+- `Ship: Min Strøm Consumer API, with price forecasts first` — this commit: section 7, step 7 `done`, marker moved to step 8
 
 ---
 
