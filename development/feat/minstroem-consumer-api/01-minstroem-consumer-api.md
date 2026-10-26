@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=2 status=active -->
+<!-- claude-plan step=3 status=active -->
 
 | Field | Value |
 |---|---|
@@ -14,7 +14,7 @@
 | # | Step | Skill | Runs | Status |
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
-| 2 | Plan | `/plan` | with the user | in progress |
+| 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | pending |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
@@ -163,8 +163,11 @@ client object. It contradicts the package's "every endpoint returns a DataFrame"
 adds a second way to call everything. Reusing `utils.chunking.gather_chunked` for windows
 was rejected too: it steps in elapsed UTC time (`DEVELOPMENT.md` already records that this
 lands boundaries at 23:00 local across DST), and the caps here are in Copenhagen calendar
-days, months and years, so windows are computed on the local calendar and gathered with
-`asyncio.gather` directly.
+days, months and years, so windows are computed on the local calendar. They are gathered
+with `utils.chunking._gather_ordered` (imported privately, as `day_ahead.py` already does):
+in order, cancelling the rest on the first failure, raising the lowest-index exception
+rather than an `ExceptionGroup`. `utils` itself is not changed this round, so the
+`DEVELOPMENT.md` note on making it public stays open.
 
 ### Modules
 
@@ -178,10 +181,10 @@ days, months and years, so windows are computed on the local calendar and gather
 | `src/energydata/minstroem/costs.py` | new | `get_consumption_costs`, `get_solar_export_revenue`. |
 | `src/energydata/minstroem/prices.py` | new | `get_prices`, `get_forecast_prices`, `get_prices_with_forecast` — the forecast work lives here. |
 | `tests/conftest.py` | changed | `_no_network` lets tests marked `live` through; adds `MinStroemService` (mock API), the `minstroem_service` fixture, the `live_report` fixture and a `pytest_terminal_summary` hook printing the live summary. |
-| `tests/fixtures/minstroem_openapi.json` | new | The OpenAPI 3.1 spec as published on 2026-10-26 (from `https://docs.minstroem.app/api-reference/openapi.json`; a copy is at `/tmp/claude-0/-home-user-energydata/60b8d84e-5bb9-5816-9657-415e08267532/scratchpad/docs/openapi.json`), for the contract test. |
+| `tests/fixtures/minstroem_openapi.json` | new, **committed with this plan** | The OpenAPI 3.1 spec as published on 2026-10-26 (from `https://docs.minstroem.app/api-reference/openapi.json`), for the contract test. Already on the branch; the build uses it as is and never re-downloads it. |
 | `tests/test_minstroem_client.py`, `tests/test_minstroem_series.py`, `tests/test_minstroem_addresses.py`, `tests/test_minstroem_usage.py`, `tests/test_minstroem_costs.py`, `tests/test_minstroem_prices.py`, `tests/test_minstroem_spec.py` | new | Offline suites (step 5). |
 | `tests/test_minstroem_live.py` | new | Live suite, every test marked `live`, skipped without `MINSTROEM_API_KEY` (written at step 3 so it exists even if step 5 is cut short; extended at step 5). |
-| `pyproject.toml` | changed | `[tool.pytest.ini_options] markers = ["live: calls the real Min Strøm API; needs MINSTROEM_API_KEY"]`. |
+| `pyproject.toml` | changed | `[tool.pytest.ini_options]`: `markers = ["live: calls the real Min Strøm API; needs MINSTROEM_API_KEY"]`, and `addopts = "-v -m 'not live'"` so plain `pytest` (and the stop gate, and CI) deselects the live tests even when the key is set; the live command passes `-m live`, and the last `-m` wins. |
 | `README.md`, `STRUCTURE.md`, `.claude/rules/structure-minstroem.md`, `.claude/rules/structure-utils.md` | changed / new | Docs (A9). The utils rules file only gains the conftest line. The README's first line names Min Strøm as a source. |
 
 ### Public API
@@ -199,8 +202,8 @@ for the requested interval, in order; a row the API did not return is NaN (float
 | `API_KEY_ENV: str = "MINSTROEM_API_KEY"` | `client.py` | The environment variable read when no key is passed. | A7, A8 |
 | `class MinStroemError(Exception)` with `__init__(self, message: str, *, status: int \| None = None, error_code: str \| None = None, reason: str \| None = None, request_id: str \| None = None) -> None` and attributes `status`, `error_code`, `reason`, `request_id` | `client.py` | An API error response, an exhausted retry or holdoff on a response, or a payload that is not what the spec promises (then `status` is the 2xx status and `error_code` is `None`). `str()` is the message only. | A7 |
 | `class MissingApiKeyError(MinStroemError)` | `client.py` | Raised by the first request when the client has no key; message names `API_KEY_ENV`. All four attributes `None`. | A7 |
-| `MinStroemClient(api_key: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `client.py` | `ApiClient` on `BASE_URL`. `api_key=None` reads `API_KEY_ENV` at construction; an empty or whitespace key counts as none. Never fails for a missing key at construction. `max_concurrency < 1` is a `ValueError`. `__repr__` returns `MinStroemClient(key=set)` / `MinStroemClient(key=missing)` — never the key. Property `has_api_key: bool`. | A7 |
-| `async MinStroemClient.fetch_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | One `GET` through `ApiClient.request` with `Authorization: Bearer <key>`; returns the JSON object. Maps `httpx.HTTPStatusError`, and `RetriesExhaustedError`/`HoldoffTooLongError` that carry a response, to `MinStroemError` (chained) with status, `errorCode`, `reason` (from the body when it is the documented error object, else `None`) and `X-Request-ID`. A `RetriesExhaustedError` without a response (transport failure) propagates unchanged. A body that is not a JSON object is a `MinStroemError`. `MissingApiKeyError` before any I/O when the key is missing. Only awaitable on the client's loop. | A7 |
+| `MinStroemClient(api_key: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `client.py` | `ApiClient` on `BASE_URL`. `api_key=None` reads `API_KEY_ENV` at construction; the key is stripped, and an empty result counts as none. A key that is not entirely `[\x21-\x7e]` (control characters, inner whitespace, non-ASCII) is kept out of the headers and refused at the first request with a `MinStroemError` saying the key has characters an HTTP header cannot carry — never echoing it. Never fails for a missing or bad key at construction. `max_concurrency < 1` is a `ValueError`. `__repr__` returns `MinStroemClient(key=set)` / `MinStroemClient(key=missing)` — never the key. Property `has_api_key: bool`. | A7 |
+| `async MinStroemClient.fetch_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | One `GET` through `ApiClient.request` with `Authorization: Bearer <key>`; returns the JSON object. Maps `httpx.HTTPStatusError`, and `RetriesExhaustedError`/`HoldoffTooLongError` that carry a response, to `MinStroemError` (chained) with status, `errorCode`, `reason` (from the body when it is the documented error object, else `None`) and `X-Request-ID`. A `RetriesExhaustedError` without a response (transport failure) propagates unchanged. A 2xx body that does not parse (`ParseError`) or is not a JSON object is a `MinStroemError` (`status` the 2xx status, `error_code` `None`), chained. `MissingApiKeyError` (or the bad-key `MinStroemError`) before any I/O. Only awaitable on the client's loop. | A7 |
 | `MinStroemClient.get_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | Sync form through `run`. | A7 |
 | `type Aggregation = Literal["hour", "day", "month", "year"]`, `AGGREGATIONS: tuple[Aggregation, ...]` | `_series.py`, re-exported | Usage, cost and revenue intervals, API spelling. | A5 |
 | `type PriceResolution = Literal["hour", "fifteenMinutes"]`, `PRICE_RESOLUTIONS: tuple[PriceResolution, ...]` | `_series.py`, re-exported | Historical price intervals, API spelling. | A5 |
@@ -212,10 +215,16 @@ for the requested interval, in order; a row the API did not return is NaN (float
 | `get_prices(start: TimeLike, end: TimeLike \| None = None, *, resolution: PriceResolution = "hour", address_id: str \| None = None, client: MinStroemClient \| None = None) -> pd.DataFrame` | `prices.py` | Series frame: `total_price_per_kwh`, `variable_charges_per_kwh`. `attrs`: `address_id`, `resolution`, `currency`, `vat_included`. | A5, A6 |
 | `get_forecast_prices(*, address_id: str \| None = None, client: MinStroemClient \| None = None) -> pd.DataFrame` | `prices.py` | Hourly frame (index as a series frame) from the first to the last forecast hour, interior gaps NaN: `total_price_per_kwh`, `variable_charges_per_kwh`. `attrs`: `address_id`, `currency`, `vat_included`, `fetched_at` (tz-aware Copenhagen `pd.Timestamp`, taken when the response arrived). Empty forecast: empty frame, same columns, empty tz-aware `"time"` index, `attrs` still set. A 422 `feature_unavailable` surfaces as `MinStroemError` whose message names the `forecastPrices` capability. | A1, A4 |
 | `get_prices_with_forecast(start: TimeLike, end: TimeLike \| None = None, *, address_id: str \| None = None, client: MinStroemClient \| None = None) -> pd.DataFrame` | `prices.py` | Hourly frame: `total_price_per_kwh`, `variable_charges_per_kwh`, `is_forecast`. Rules in the guide, step 9. `attrs`: `address_id`, `currency`, `vat_included`, `fetched_at`. | A2, A4 |
-| `main() -> None` in each public module | every module | Showcase. With no key it prints one line saying to set `MINSTROEM_API_KEY` and returns (exit 0); with a key it calls the live API and prints shapes, the region and a few values — never the address text or the key. | — |
+| `main() -> None` in each module | every module | Showcase; `_series.main()` is an offline showcase of alignment and calendar windows. With no key it prints one line saying to set `MINSTROEM_API_KEY` and returns (exit 0); with a key it calls the live API and prints shapes, the region and a few values — never the address text or the key. | — |
 
-Shared behaviour of every address-scoped function (A4): `address_id=None` makes one
-`/me/addresses` request and uses the only address; zero addresses is a `ValueError`
+Shared behaviour of every address-scoped function (A4): `address_id` and `client` are
+keyword-only on purpose (A2's `get_prices_with_forecast(start, end=None, address_id=None)`
+is written with `address_id` as a keyword, following the package's keyword-only `client`),
+so this is not drift. `address_id=None` makes one `/me/addresses` request and uses the
+only address, and — because its capability flags are then in hand — checks the endpoint's
+flag before requesting it, raising `MinStroemError` naming the capability (e.g.
+"the address has no 'forecastPrices' capability") when it is false; with an explicit id
+the server's 422 mapping names it instead; zero addresses is a `ValueError`
 ("no addresses on this account"); several is a `ValueError` listing each `id` and `label`.
 An `address_id` that is not a UUID string (`uuid.UUID(value)` fails) is a `ValueError`
 before any request, so nothing can be smuggled into the path. Validation of `start`/`end`,
@@ -270,22 +279,25 @@ before any request, so nothing can be smuggled into the path. Validation of `sta
    Every window is then aligned to the interval, touches at most 366 local days (90 for
    quarter-hours, five calendar years for usage at day and above, one year for yearly
    costs), and consecutive windows share a boundary, so no interval is requested twice.
-6. **`_series.py` — fetch and frame.** A private async function: resolve the address
-   (step 7), then request every window concurrently with `asyncio.gather` (the client's
+6. **`_series.py` — address resolution and client lifecycle.** A private async resolver
+   implementing the A4 rules above (lookup, single-address rule, capability pre-check,
+   UUID check), and a private context helper that yields the passed client or a new one
+   it closes.
+7. **`_series.py` — fetch and frame.** A private async function: resolve the address
+   (step 6), then request every window concurrently with `_gather_ordered` (the client's
    semaphore bounds it), each with `from`/`to` as UTC `YYYY-MM-DDTHH:MM:SSZ` and the
    interval parameter (`aggregation` or `resolution`). Check each payload: `data` is a
    list of objects carrying the endpoint's required fields (the spec's required
    properties), numbers are numbers (not `bool`), nullable fields may be `null`
-   (→ NaN), `isEstimate` is a bool. Parse `start` as UTC, convert to Copenhagen. A row
+   (→ NaN) — and for `/prices` and `/forecast-prices` **both** price fields accept `null`
+   (→ NaN) although the spec types `totalPricePerKWh` as non-null, because A1 promises
+   NaN where null, `isEstimate` is a bool. Parse `start` as UTC, convert to Copenhagen. A row
    outside its window is dropped (the server may expand); a row whose start is not on the
    interval index, or a start seen twice, is a `MinStroemError`. For monetary endpoints
    every window's `currency` and `vatIncluded` must agree, else `MinStroemError`. Build
    the frame by reindexing onto the full index — NaN/`<NA>` where absent, never filled —
    with the fixed column order and dtypes. A private sync wrapper runs it through the
    client, creating and closing a client when none was passed.
-7. **`_series.py` — address resolution and client lifecycle.** A private async resolver
-   implementing the A4 rules above, and a private context helper that yields the passed
-   client or a new one it closes.
 8. **`addresses.py`, `usage.py`, `costs.py`.** Thin functions over the shared path:
    endpoint path, interval parameter name, family (for the window table), field→column map.
 9. **`prices.py`.** `get_prices` as above. `get_forecast_prices`: resolve the address, one
@@ -296,16 +308,22 @@ before any request, so nothing can be smuggled into the path. Validation of `sta
    - resolve `start` (and `end` when given) with `resolve_period(..., resolution=1 h)`; when
      `end` is `None`, use only the resolved start;
    - resolve the address once; fetch the forecast first;
-   - the confirmed-price request covers `[start, bound)` where `bound` is the first
-     forecast hour when the forecast is non-empty, else local midnight two days after
-     today's local date; also capped at `end` when given; skipped when `bound <= start`;
-     fetched through the same windowed path as `get_prices(resolution="hour")`;
+   - a forecast-capability error (pre-check or 422) stops the combined series too — without
+     a forecast it is `get_prices`;
    - the frame's end is `end` when given; otherwise one hour after the last forecast row,
-     or, with an empty forecast, one hour after the last confirmed row (empty frame when
-     there are none);
-   - confirmed values with `is_forecast = False`, forecast values with `True` only where
-     no confirmed row exists for that hour, forecast rows outside `[start, end)` dropped,
-     every other hour NaN with `is_forecast` `<NA>`;
+     or, with an empty forecast, local midnight two days after today's local date;
+   - a frame end at or before `start` returns the documented empty frame (columns, empty
+     tz-aware `"time"` index, `attrs` set) without requesting `/prices`;
+   - confirmed prices are requested over `[start, min(frame end, confirmed cap))`, where the
+     confirmed cap is local midnight two days after today's local date (day-ahead prices
+     are never confirmed beyond tomorrow, so no `to` further ahead is ever sent), through
+     the same windowed path as `get_prices(resolution="hour")`; skipped when that range is
+     empty;
+   - A2 applied literally: `last_confirmed` is the latest hour with a confirmed row;
+     confirmed rows give `is_forecast = False`; forecast rows give `True` only for hours
+     after `last_confirmed` (all forecast hours when there is no confirmed row), so
+     confirmed wins any overlap; forecast rows outside `[start, frame end)` are dropped;
+     every other hour is NaN with `is_forecast` `<NA>`;
    - currency and VAT flag must agree between the two sources, else `MinStroemError`.
 10. **`__init__.py`** re-exports: `BASE_URL`, `API_KEY_ENV`, `MinStroemClient`,
     `MinStroemError`, `MissingApiKeyError`, `Aggregation`, `AGGREGATIONS`,
@@ -338,7 +356,15 @@ before any request, so nothing can be smuggled into the path. Validation of `sta
 13. **Docs.** README section "Min Strøm" after the Energi Data Service sections: the key
     (Min Strøm Plus, iOS app, `MINSTROEM_API_KEY` or `api_key=`), an example with the
     forecast, a function table like the others (unit, interval, columns, endpoint), the
-    missing-is-NaN and `attrs` notes, and how to run the live tests. `STRUCTURE.md` tree and
+    missing-is-NaN and `attrs` notes, and how to run the live tests with exactly this
+    line from the repo root (the step 7 trace and the pull request repeat it):
+
+    ```powershell
+    $env:MINSTROEM_API_KEY='<din-nøgle>'; .venv\Scripts\python.exe -m pytest tests/test_minstroem_live.py -m live -rA --tb=short -p no:cacheprovider; Remove-Item Env:MINSTROEM_API_KEY
+    ```
+
+    (`Remove-Item` because `$env:` lasts for the rest of the PowerShell session; `-rA`
+    gives a one-line outcome per test, skip reasons included, under the summary block.) `STRUCTURE.md` tree and
     subpackage section; `.claude/rules/structure-minstroem.md` with full signature tables;
     conftest line in `structure-utils.md` and `structure-energidataservice.md` where they
     describe `conftest.py`.
@@ -347,19 +373,19 @@ before any request, so nothing can be smuggled into the path. Validation of `sta
 
 | # | Must prove | Covers |
 |---|---|---|
-| T1 | `get_forecast_prices` builds the hourly frame (columns, dtypes, Copenhagen index, interior gaps NaN, nulls NaN), sets `currency`/`vat_included`/`fetched_at`, returns the documented empty frame for `data: []`, refuses an off-hour or duplicate row, and turns a 422 `feature_unavailable` into a `MinStroemError` naming `forecastPrices`. | A1 |
-| T2 | `get_prices_with_forecast` stitches confirmed then forecast with `is_forecast`, confirmed wins an overlap, with `end` covers exactly `[start, end)` with NaN/`<NA>` for neither, without `end` runs to the last forecast hour (or last confirmed hour when the forecast is empty), never asks `/prices` past the first forecast hour, drops forecast rows outside the period, and refuses a currency disagreement. Includes a DST day. | A2 |
+| T1 | `get_forecast_prices` builds the hourly frame (columns, dtypes, Copenhagen index, interior gaps NaN, nulls NaN), sets `currency`/`vat_included`/`fetched_at`, returns the documented empty frame for `data: []`, refuses an off-hour or duplicate row, turns a 422 `feature_unavailable` into a `MinStroemError` naming `forecastPrices`, and with `address_id=None` refuses an address whose `forecastPrices` flag is false before requesting it; a `null` `totalPricePerKWh` or `variableChargesPerKWh` is NaN, not an error. | A1 |
+| T2 | `get_prices_with_forecast` stitches confirmed then forecast with `is_forecast`; a mock serving confirmed rows past the first forecast hour gives confirmed values there and forecast only after the last confirmed hour; with `end` covers exactly `[start, end)` with NaN/`<NA>` for neither; without `end` runs to the last forecast hour (or local midnight two days ahead when the forecast is empty); never sends `/prices` a `to` beyond local midnight two days after today; a computed end at or before `start` gives the empty frame; a forecast-capability error stops it; drops forecast rows outside the period; refuses a currency disagreement. Includes a DST day. | A2 |
 | T3 | `get_addresses` maps every field and capability to the documented columns and dtypes, keeps nulls as `None`, returns the empty frame for `{"data": []}`, and refuses a malformed address. | A3 |
 | T4 | `address_id=None` uses the single address (one lookup request, then the series request with that id); zero and several addresses raise `ValueError`, the latter listing ids and labels; a non-UUID id is refused before any request. | A4 |
 | T5 | Each series function, for each of its intervals, returns one row per interval of `[start, end)` on the Danish calendar — including 23- and 25-hour days, months and years — with missing rows NaN/`<NA>` (never 0), the right columns, dtypes and `attrs`; a misaligned bound is a `ValueError` naming it before any request; `from`/`to`/interval parameters are what the API expects. | A5 |
 | T6 | For every row of the window table, a period just over the cap is split into aligned windows that each pass the mock's cap check, abut without overlap, and give the same frame as an uncapped mock serving the whole period at once. | A6 |
 | T7 | HTTP errors (each documented status with its error body, a non-JSON error body, 429 with a long `Retry-After`, exhausted 503s) become `MinStroemError` with status, code, reason and request id, chained; a transport failure stays `RetriesExhaustedError`; a non-object or malformed 200 body is a `MinStroemError`. | A7 |
-| T8 | The key: taken from the argument, else from `MINSTROEM_API_KEY`; sent as `Bearer`; a missing/blank key raises `MissingApiKeyError` naming the variable only at the first request (construction and imports succeed); the key appears in no exception `str`/`args`/chained message, no `repr` of the client, and no captured test output. | A7, A8 |
+| T8 | The key: taken from the argument, else from `MINSTROEM_API_KEY`; sent as `Bearer`; a missing/blank key raises `MissingApiKeyError` naming the variable only at the first request (construction and imports succeed); the key appears in no exception `str`/`args`/chained message, no `repr` of the client, and no captured test output — including a key with a trailing newline (stripped, works) and one with an inner control or non-ASCII character (refused at the first request, never echoed in any `str`, `args` or chained message). | A7, A8 |
 | T9 | Client lifecycle: a created client is closed on success and on error; a passed one is left open and reusable. | A5 |
-| T10 | Live suite: skipped (not failed, not erroring) without the key; collected with `-m live`; plain `pytest` touches no network; the `_no_network` guard still refuses for unmarked tests; the summary block appears only when live lines were reported. | A8 |
+| T10 | Live suite: deselected by plain `pytest` even with the key set (the `addopts` marker expression); skipped (not failed, not erroring) with `-m live` and no key; collected with `-m live`; plain `pytest` touches no network; the `_no_network` guard still refuses for unmarked tests; the summary block appears only when live lines were reported. | A8 |
 | T11 | Contract: every field name, enum value, path and query parameter the modules use matches `tests/fixtures/minstroem_openapi.json` (required properties of each schema, `Aggregation`, `PriceResolution`, `Currency` enums, the seven paths, `servers[0].url == BASE_URL`). | A3, A5, A1 |
-| T12 | Docs: the README names every public function of the subpackage and `MINSTROEM_API_KEY`; `STRUCTURE.md` names every new module (the stop gate also checks this). | A9 |
-| T13 | The mock (`MinStroemService`) behaves like the documented API, so T5/T6 mean something: bearer check (401 `invalid_token`), parameter validation (400 `invalid_parameter`, `invalid_range`), outward normalisation to the Copenhagen calendar, caps after normalisation (400 `range_too_large`), sparse rows with configurable gaps and nulls, currency, forecast rows, per-path status overrides, and a record of every request. A few direct tests of the mock pin this. | A5, A6, A7 |
+| T12 | Docs: the README names every public function of the subpackage and `MINSTROEM_API_KEY`, and contains the exact live-test PowerShell line from guide step 13; `STRUCTURE.md` names every new module (the stop gate also checks this). | A9 |
+| T13 | The mock (`MinStroemService`) behaves like the documented API, so T5/T6 mean something: bearer check (401 `invalid_token`), parameter validation (400 `invalid_parameter`, `invalid_range`), outward normalisation to the Copenhagen calendar, caps after normalisation (400 `range_too_large`) pinned to the strictest reading and written independently of `_series.py` — at most 366 local calendar days touched (any partial day counting) for hourly/daily usage, costs and revenue and hourly prices, 90 for `fifteenMinutes`, at most 5 calendar years touched for usage at `day` and above, at most 366 days for costs/revenue at `month`/`year` (so a yearly request crossing New Year is refused), each counted after outward expansion, sparse rows with configurable gaps and nulls, currency, forecast rows, per-path status overrides, and a record of every request. A few direct tests of the mock pin this. | A5, A6, A7 |
 
 ### Risks
 
@@ -381,8 +407,30 @@ before any request, so nothing can be smuggled into the path. Validation of `sta
   never headers, and the key is never in the URL; T8 asserts it across the chain.
 - **Rate limits in the live suite** (60/min). About 25 requests; the retry wrapper honours
   `Retry-After` up to `max_holdoff` (300 s). No action needed.
+- **`/prices` may refuse a future `to`.** The combined series sends at most local midnight
+  two days ahead; if the live probe shows even that is refused, the fix is a cap at the
+  current hour — a follow-up before merge, not a halt.
 - **Halt only** for a finding that changes section 1 — for example, if a criterion turns out
   to be untestable as written or contradicts the documented API.
+
+### Critique
+
+`plan-critic` verdict: accept with changes. Every finding applied:
+
+1. Combined series never fetched confirmed hours at/after the first forecast row, so "confirmed wins" relied on a docs claim — **applied**: confirmed prices are requested over the frame (capped at local midnight two days ahead), A2 applied literally via `last_confirmed`; T2 rewritten.
+2. A key with control/non-ASCII characters could leak through h11's "Illegal header value" error — **applied**: key stripped, validated against `[\x21-\x7e]+`, refused at first request without echo; T8 extended.
+3. A user who sets `MINSTROEM_API_KEY` would make plain `pytest` (and the stop gate) run live — **applied**: `addopts` deselects `live`; T10 updated.
+4. The A8 PowerShell line was never written down — **applied**: fixed in guide step 13, checked by T12.
+5. Windowed fetch reimplemented `_gather_ordered` with weaker cancellation — **applied**: imported privately like `day_ahead.py`; utils unchanged, DEVELOPMENT note stays open.
+6. Spec types `totalPricePerKWh` non-null though A1 promises NaN; capability error relied only on a 422 — **applied**: null accepted for both price fields; capability pre-check when `address_id=None`; T1 extended.
+7. Non-JSON 2xx would surface as `ParseError` — **applied**: mapped to `MinStroemError`.
+8. Combined series' end-before-start and 422 cases undecided — **applied**: empty frame; capability error stops it; T2 extended.
+9. Spec fixture source fragile — **applied**: `tests/fixtures/minstroem_openapi.json` committed with this plan.
+10. Mock cap counting unspecified, risking circular tests — **applied**: pinned to the strictest reading in T13, written independently of `_series.py`.
+11. `_series.main()` missing, step order, keyword-only `address_id` — **applied**: all three.
+
+Coverage re-run after the critique: every criterion A1–A9 still has at least one Public API
+entry and at least one test intent; no public entry lacks a criterion.
 
 ---
 

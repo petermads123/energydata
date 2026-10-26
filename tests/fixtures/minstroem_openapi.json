@@ -1,0 +1,1977 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Min Strøm Consumer API",
+    "version": "1.0.0",
+    "summary": "Read-only access to your own energy data with Min Strøm Plus.",
+    "description": "Read your energy data with an API key created in the iOS app. An active Min Strøm Plus subscription is required. See the guides for time ranges, data interpretation, and request limits.",
+    "contact": {
+      "name": "Min Strøm",
+      "email": "engberg@minstroem.app"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.minstroem.app/consumer/v1",
+      "description": "Consumer API"
+    }
+  ],
+  "security": [
+    {
+      "ConsumerBearer": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Addresses",
+      "description": "Your addresses and available data."
+    },
+    {
+      "name": "Energy",
+      "description": "Consumption, export and calculated amounts."
+    },
+    {
+      "name": "Prices",
+      "description": "Confirmed and forecast address prices."
+    }
+  ],
+  "paths": {
+    "/me/addresses": {
+      "get": {
+        "operationId": "listAddresses",
+        "summary": "List addresses",
+        "description": "List your addresses and the data available for each.",
+        "tags": [
+          "Addresses"
+        ],
+        "responses": {
+          "200": {
+            "description": "Your addresses. The list is empty when no addresses are available.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "data": [
+                        {
+                          "id": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                          "label": "Example home",
+                          "formattedAddress": "Example Road 12, 1000 Example City",
+                          "region": "DK2",
+                          "timeZone": "Europe/Copenhagen",
+                          "gridOperatorName": null,
+                          "supplierName": null,
+                          "capabilities": {
+                            "consumption": true,
+                            "solarExport": true,
+                            "consumptionCosts": true,
+                            "solarExportRevenue": true,
+                            "prices": true,
+                            "forecastPrices": true
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses\""
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/consumption": {
+      "get": {
+        "operationId": "consumption",
+        "summary": "Get consumption",
+        "description": "Get electricity consumption. Hourly requests cover up to 366 days; daily, monthly, or yearly requests cover up to five years. Limits apply after range normalization.",
+        "tags": [
+          "Energy"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "energyKWh": 2,
+                          "isEstimate": false
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error --get \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  --data-urlencode \"from=2026-09-05T10:00:00Z\" \\\n  --data-urlencode \"to=2026-09-05T11:00:00Z\" \\\n  --data-urlencode \"aggregation=hour\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/consumption\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          },
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Aggregation"
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/solar-export": {
+      "get": {
+        "operationId": "solarExport",
+        "summary": "Get solar export",
+        "description": "Get electricity exported from solar. Hourly requests cover up to 366 days; daily, monthly, or yearly requests cover up to five years. Limits apply after range normalization.",
+        "tags": [
+          "Energy"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "energyKWh": 2,
+                          "isEstimate": false
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error --get \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  --data-urlencode \"from=2026-09-05T10:00:00Z\" \\\n  --data-urlencode \"to=2026-09-05T11:00:00Z\" \\\n  --data-urlencode \"aggregation=hour\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/solar-export\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          },
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Aggregation"
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/consumption-costs": {
+      "get": {
+        "operationId": "consumptionCosts",
+        "summary": "Get consumption costs",
+        "description": "Get calculated electricity costs, including VAT and fixed fees. Available for Danish addresses. Request up to 366 days after range normalization.",
+        "tags": [
+          "Energy"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "energyKWh": 2,
+                          "totalPricePerKWh": 2.25,
+                          "fixedFeesForInterval": 0.1,
+                          "totalCost": 4.6,
+                          "isEstimate": false
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error --get \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  --data-urlencode \"from=2026-09-05T10:00:00Z\" \\\n  --data-urlencode \"to=2026-09-05T11:00:00Z\" \\\n  --data-urlencode \"aggregation=hour\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/consumption-costs\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          },
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Aggregation"
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/solar-export-revenue": {
+      "get": {
+        "operationId": "solarExportRevenue",
+        "summary": "Get solar-export revenue",
+        "description": "Get calculated solar-export revenue after fixed fees, excluding VAT. Available for Danish addresses. Request up to 366 days after range normalization.",
+        "tags": [
+          "Energy"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": false,
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "energyKWh": 2,
+                          "totalPricePerKWh": 0.5,
+                          "fixedFeesForInterval": 0.1,
+                          "netRevenue": 0.9,
+                          "isEstimate": true
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "aggregation": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": false,
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error --get \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  --data-urlencode \"from=2026-09-05T10:00:00Z\" \\\n  --data-urlencode \"to=2026-09-05T11:00:00Z\" \\\n  --data-urlencode \"aggregation=hour\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/solar-export-revenue\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          },
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Aggregation"
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/prices": {
+      "get": {
+        "operationId": "prices",
+        "summary": "Get historical prices",
+        "description": "Get confirmed electricity prices by hour or quarter-hour. Request up to 366 days at hourly resolution or 90 days at quarter-hour resolution, after range normalization.",
+        "tags": [
+          "Prices"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "resolution": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "totalPricePerKWh": 1.234,
+                          "variableChargesPerKWh": null
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "from": "2026-09-05T10:00:00Z",
+                      "to": "2026-09-05T11:00:00Z",
+                      "resolution": "hour",
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error --get \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  --data-urlencode \"from=2026-09-05T10:00:00Z\" \\\n  --data-urlencode \"to=2026-09-05T11:00:00Z\" \\\n  --data-urlencode \"resolution=hour\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/prices\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          },
+          {
+            "$ref": "#/components/parameters/From"
+          },
+          {
+            "$ref": "#/components/parameters/To"
+          },
+          {
+            "$ref": "#/components/parameters/Resolution"
+          }
+        ]
+      }
+    },
+    "/me/addresses/{addressId}/forecast-prices": {
+      "get": {
+        "operationId": "forecastPrices",
+        "summary": "Get forecast prices",
+        "description": "Get upcoming hourly price estimates for DK1, DK2, SE3, and SE4. Forecasts follow the latest confirmed price, starting no earlier than the current hour. The available forecast period varies.",
+        "tags": [
+          "Prices"
+        ],
+        "responses": {
+          "200": {
+            "description": "Available readings in time order. Results may contain gaps or be empty.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControl"
+              },
+              "X-RateLimit-Limit-Minute": {
+                "$ref": "#/components/headers/LimitMinute"
+              },
+              "X-RateLimit-Remaining-Minute": {
+                "$ref": "#/components/headers/RemainingMinute"
+              },
+              "X-RateLimit-Reset-Minute": {
+                "$ref": "#/components/headers/ResetMinute"
+              },
+              "X-RateLimit-Limit-Day": {
+                "$ref": "#/components/headers/LimitDay"
+              },
+              "X-RateLimit-Remaining-Day": {
+                "$ref": "#/components/headers/RemainingDay"
+              },
+              "X-RateLimit-Reset-Day": {
+                "$ref": "#/components/headers/ResetDay"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastResponse"
+                },
+                "examples": {
+                  "synthetic": {
+                    "summary": "Synthetic example; not customer data",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "resolution": "hour",
+                      "isEstimate": true,
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": [
+                        {
+                          "start": "2026-09-05T10:00:00Z",
+                          "end": "2026-09-05T11:00:00Z",
+                          "totalPricePerKWh": 1.234,
+                          "variableChargesPerKWh": null
+                        }
+                      ]
+                    }
+                  },
+                  "empty": {
+                    "summary": "No available rows",
+                    "value": {
+                      "addressId": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167",
+                      "resolution": "hour",
+                      "isEstimate": true,
+                      "timeZone": "Europe/Copenhagen",
+                      "currency": "DKK",
+                      "vatIncluded": true,
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnavailableFeature"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/UpstreamUnavailable"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "curl",
+            "label": "curl",
+            "source": "curl --fail-with-body --silent --show-error \\\n  --header \"Authorization: Bearer ${MINSTROEM_API_TOKEN}\" \\\n  \"https://api.minstroem.app/consumer/v1/me/addresses/${MINSTROEM_ADDRESS_ID}/forecast-prices\""
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AddressId"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ConsumerBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key created in the iOS app. Requires an active Min Strøm Plus subscription."
+      }
+    },
+    "schemas": {
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "UTC instant encoded with Z. Interval ends are exclusive.",
+        "examples": [
+          "2026-09-05T10:00:00Z"
+        ]
+      },
+      "TimeZone": {
+        "type": "string",
+        "description": "Calendar used for interval boundaries: Europe/Copenhagen. Timestamps are UTC.",
+        "examples": [
+          "Europe/Copenhagen"
+        ]
+      },
+      "Currency": {
+        "type": "string",
+        "enum": [
+          "DKK",
+          "SEK",
+          "NOK"
+        ],
+        "description": "Currency for monetary amounts and per-kWh rates."
+      },
+      "Aggregation": {
+        "type": "string",
+        "enum": [
+          "hour",
+          "day",
+          "month",
+          "year"
+        ]
+      },
+      "PriceResolution": {
+        "type": "string",
+        "enum": [
+          "hour",
+          "fifteenMinutes"
+        ]
+      },
+      "Capabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "consumption",
+          "solarExport",
+          "consumptionCosts",
+          "solarExportRevenue",
+          "prices",
+          "forecastPrices"
+        ],
+        "properties": {
+          "consumption": {
+            "type": "boolean",
+            "description": "Electricity consumption is available."
+          },
+          "solarExport": {
+            "type": "boolean",
+            "description": "Solar-export readings are available."
+          },
+          "consumptionCosts": {
+            "type": "boolean",
+            "description": "Calculated consumption costs are available."
+          },
+          "solarExportRevenue": {
+            "type": "boolean",
+            "description": "Calculated solar-export revenue is available."
+          },
+          "prices": {
+            "type": "boolean",
+            "description": "Historical electricity prices are available."
+          },
+          "forecastPrices": {
+            "type": "boolean",
+            "description": "Hourly price forecasts are available."
+          }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "formattedAddress",
+          "region",
+          "timeZone",
+          "gridOperatorName",
+          "supplierName",
+          "capabilities"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Address ID to use in series requests."
+          },
+          "label": {
+            "type": "string",
+            "description": "User-facing label."
+          },
+          "formattedAddress": {
+            "type": "string",
+            "description": "Formatted display address."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "DK1",
+              "DK2",
+              "SE1",
+              "SE2",
+              "SE3",
+              "SE4",
+              "NO1",
+              "NO2",
+              "NO3",
+              "NO4",
+              "NO5",
+              null
+            ],
+            "description": "Electricity-price region, or null when unavailable."
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "gridOperatorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Grid operator name, or null when unavailable."
+          },
+          "supplierName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current electricity supplier name, or null when unavailable."
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          }
+        }
+      },
+      "UsageInterval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end",
+          "energyKWh",
+          "isEstimate"
+        ],
+        "properties": {
+          "start": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "end": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "energyKWh": {
+            "type": "number",
+            "format": "double",
+            "description": "Returned energy in kWh. Missing rows are not zero."
+          },
+          "isEstimate": {
+            "type": "boolean",
+            "description": "True when the reading is estimated."
+          }
+        }
+      },
+      "CostInterval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end",
+          "energyKWh",
+          "totalPricePerKWh",
+          "fixedFeesForInterval",
+          "totalCost",
+          "isEstimate"
+        ],
+        "properties": {
+          "start": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "end": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "energyKWh": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy in kWh."
+          },
+          "totalPricePerKWh": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Effective rate in currency/kWh: (totalCost - fixedFeesForInterval) / energyKWh. Null at zero energy."
+          },
+          "fixedFeesForInterval": {
+            "type": "number",
+            "format": "double",
+            "description": "Allocated fixed fees including VAT."
+          },
+          "totalCost": {
+            "type": "number",
+            "format": "double",
+            "description": "Calculated consumption cost including fixed fees and VAT."
+          },
+          "isEstimate": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RevenueInterval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end",
+          "energyKWh",
+          "totalPricePerKWh",
+          "fixedFeesForInterval",
+          "netRevenue",
+          "isEstimate"
+        ],
+        "properties": {
+          "start": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "end": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "energyKWh": {
+            "type": "number",
+            "format": "double",
+            "description": "Exported energy in kWh."
+          },
+          "totalPricePerKWh": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Effective rate in currency/kWh: (netRevenue + fixedFeesForInterval) / energyKWh. Null at zero energy."
+          },
+          "fixedFeesForInterval": {
+            "type": "number",
+            "format": "double",
+            "description": "Allocated fixed fees excluding VAT."
+          },
+          "netRevenue": {
+            "type": "number",
+            "format": "double",
+            "description": "Calculated net revenue after fixed fees, excluding VAT. May be negative."
+          },
+          "isEstimate": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PriceInterval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end",
+          "totalPricePerKWh",
+          "variableChargesPerKWh"
+        ],
+        "properties": {
+          "start": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "end": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "totalPricePerKWh": {
+            "type": "number",
+            "format": "double",
+            "description": "Price in currency/kWh including VAT, rounded to three decimals. Based on available price components. Fixed fees are reported by the cost and revenue endpoints."
+          },
+          "variableChargesPerKWh": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Variable charges in currency/kWh including VAT, rounded to three decimals. Null when unavailable."
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error",
+          "reason",
+          "errorCode"
+        ],
+        "properties": {
+          "error": {
+            "type": "boolean",
+            "const": true
+          },
+          "reason": {
+            "type": "string",
+            "description": "Safe human-readable explanation; use errorCode for program logic."
+          },
+          "errorCode": {
+            "type": "string",
+            "description": "Stable machine-readable error code."
+          }
+        }
+      },
+      "AddressResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Address"
+            }
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "addressId",
+          "from",
+          "to",
+          "aggregation",
+          "timeZone",
+          "data"
+        ],
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "aggregation": {
+            "$ref": "#/components/schemas/Aggregation"
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageInterval"
+            },
+            "description": "Ascending sparse rows; empty is valid. Gaps are not zero readings."
+          }
+        }
+      },
+      "CostResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "addressId",
+          "from",
+          "to",
+          "aggregation",
+          "timeZone",
+          "currency",
+          "vatIncluded",
+          "data"
+        ],
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "aggregation": {
+            "$ref": "#/components/schemas/Aggregation"
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "vatIncluded": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostInterval"
+            },
+            "description": "Ascending sparse rows; empty is valid. Gaps are not zero readings."
+          }
+        }
+      },
+      "RevenueResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "addressId",
+          "from",
+          "to",
+          "aggregation",
+          "timeZone",
+          "currency",
+          "vatIncluded",
+          "data"
+        ],
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "aggregation": {
+            "$ref": "#/components/schemas/Aggregation"
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "vatIncluded": {
+            "type": "boolean",
+            "const": false
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevenueInterval"
+            },
+            "description": "Ascending sparse rows; empty is valid. Gaps are not zero readings."
+          }
+        }
+      },
+      "PriceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "addressId",
+          "from",
+          "to",
+          "timeZone",
+          "resolution",
+          "currency",
+          "vatIncluded",
+          "data"
+        ],
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/PriceResolution"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "vatIncluded": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceInterval"
+            },
+            "description": "Ascending sparse rows; empty is valid. Gaps are not zero readings."
+          }
+        }
+      },
+      "ForecastResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "addressId",
+          "resolution",
+          "isEstimate",
+          "timeZone",
+          "currency",
+          "vatIncluded",
+          "data"
+        ],
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resolution": {
+            "type": "string",
+            "const": "hour"
+          },
+          "isEstimate": {
+            "type": "boolean",
+            "const": true
+          },
+          "timeZone": {
+            "$ref": "#/components/schemas/TimeZone"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "vatIncluded": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceInterval"
+            },
+            "description": "Ascending sparse rows; empty is valid. Gaps are not zero readings."
+          }
+        }
+      }
+    },
+    "parameters": {
+      "AddressId": {
+        "name": "addressId",
+        "in": "path",
+        "required": true,
+        "description": "Address ID returned by List addresses.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "example": "2b4bf7a8-b5d0-45ab-8d42-3a5688bba167"
+      },
+      "From": {
+        "name": "from",
+        "in": "query",
+        "required": true,
+        "description": "Inclusive RFC 3339 start with Z or numeric offset. Fractions accepted. Expanded outward to the interval.",
+        "schema": {
+          "$ref": "#/components/schemas/Timestamp"
+        },
+        "example": "2026-09-05T10:00:00Z"
+      },
+      "To": {
+        "name": "to",
+        "in": "query",
+        "required": true,
+        "description": "Exclusive RFC 3339 end after from. Expands outward unless aligned. Caps apply after expansion.",
+        "schema": {
+          "$ref": "#/components/schemas/Timestamp"
+        },
+        "example": "2026-09-05T11:00:00Z"
+      },
+      "Aggregation": {
+        "name": "aggregation",
+        "in": "query",
+        "required": true,
+        "description": "Time interval for grouping readings.",
+        "schema": {
+          "$ref": "#/components/schemas/Aggregation"
+        },
+        "example": "hour"
+      },
+      "Resolution": {
+        "name": "resolution",
+        "in": "query",
+        "required": true,
+        "description": "Confirmed historical price resolution. Hour has a 366-day cap; fifteenMinutes has 90 days after normalization.",
+        "schema": {
+          "$ref": "#/components/schemas/PriceResolution"
+        },
+        "example": "hour"
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "Response UUID for support. Never send your key.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "CacheControl": {
+        "description": "Private, non-cacheable response.",
+        "schema": {
+          "type": "string",
+          "const": "private, no-store"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds until the latest reset among exhausted windows; present on 429.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "LimitMinute": {
+        "description": "Configured minute limit; present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "example": 60
+      },
+      "RemainingMinute": {
+        "description": "Remaining minute attempts; present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "ResetMinute": {
+        "description": "Minute reset as Unix seconds (UTC fixed window); present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "LimitDay": {
+        "description": "Configured day limit; present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "example": 2000
+      },
+      "RemainingDay": {
+        "description": "Remaining day attempts; present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "ResetDay": {
+        "description": "Day reset as Unix seconds (UTC fixed window); present after quota evaluation.",
+        "schema": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Check the parameters and requested range: invalid_parameter, invalid_range, or range_too_large.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "A request parameter is invalid.",
+              "errorCode": "invalid_parameter"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "The API key is invalid (invalid_token) or expired (credential_expired).",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "A valid credential is required.",
+              "errorCode": "invalid_token"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "An active Plus subscription is required (plus_required), or access is denied (forbidden).",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "An active Min Strøm Plus subscription is required.",
+              "errorCode": "plus_required"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The address could not be found. Use an ID returned by List addresses.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "The resource was not found.",
+              "errorCode": "resource_not_found"
+            }
+          }
+        }
+      },
+      "UnavailableFeature": {
+        "description": "This data is unavailable for the address. Check its capability flags.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "This feature is unavailable for this address.",
+              "errorCode": "feature_unavailable"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Minute or daily quota exhausted. Denied attempts count too; honor Retry-After.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "The request limit has been exceeded.",
+              "errorCode": "rate_limited"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "An unexpected error occurred. Retry later or contact support.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "An unexpected error occurred.",
+              "errorCode": "internal_error"
+            }
+          }
+        }
+      },
+      "UpstreamUnavailable": {
+        "description": "Data is temporarily unavailable. Retry later.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "The data provider is temporarily unavailable.",
+              "errorCode": "upstream_unavailable"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Subscription verification or request limiting is temporarily unavailable. Retry later.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestId"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControl"
+          },
+          "X-RateLimit-Limit-Minute": {
+            "$ref": "#/components/headers/LimitMinute"
+          },
+          "X-RateLimit-Remaining-Minute": {
+            "$ref": "#/components/headers/RemainingMinute"
+          },
+          "X-RateLimit-Reset-Minute": {
+            "$ref": "#/components/headers/ResetMinute"
+          },
+          "X-RateLimit-Limit-Day": {
+            "$ref": "#/components/headers/LimitDay"
+          },
+          "X-RateLimit-Remaining-Day": {
+            "$ref": "#/components/headers/RemainingDay"
+          },
+          "X-RateLimit-Reset-Day": {
+            "$ref": "#/components/headers/ResetDay"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": true,
+              "reason": "Min Strøm Plus subscription verification is unavailable.",
+              "errorCode": "entitlement_unavailable"
+            }
+          }
+        }
+      }
+    }
+  }
+}
