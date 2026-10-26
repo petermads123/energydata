@@ -58,7 +58,10 @@ convention = "google"
 # --- Pytest Configuration ---
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v"
+# Plain `pytest` deselects the live tests even when MINSTROEM_API_KEY is set;
+# the live command passes `-m live`, and the last `-m` wins.
+addopts = "-v -m 'not live'"
+markers = ["live: calls the real Min Strøm API; needs MINSTROEM_API_KEY"]
 # Import the package from src/, so `pytest` works on a fresh clone before
 # `pip install -e ".[dev]"` has been run. The hooks are added for the same
 # reason they can import each other at runtime: Python puts a script's own
