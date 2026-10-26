@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 3 | Implement | `/implement` | in `/build` | done (re-run after step 6 sent it back, see section 3) |
 | 4 | Verify | `/verify` | in `/build` | done (re-run after step 6 sent the work back to step 3, see section 4) |
 | 5 | Test | `/test` | in `/build` | done (re-run after step 6 sent the work back, see section 5) |
-| 6 | Concept check | `/concept-check` | in `/build` | pending (first audit in section 6 sent the work back to step 3; re-run now) |
+| 6 | Concept check | `/concept-check` | in `/build` | done (second audit in section 6, after the first sent the work back to step 3) |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -1105,6 +1105,147 @@ Drift found, and what was done about it:
 ### Earlier rounds still hold
 
 First round: there are no earlier rounds to re-check.
+
+### Second audit (re-run, after steps 3, 4 and 5 re-ran for the live suite)
+
+Section 1 read first, then the code and the tests, on `5c2b078`. `git diff 9b1e56d..HEAD -- src
+pyproject.toml` is empty: the package, and so the evidence for A1 to A7 in the first audit, is
+byte-identical to what was audited then; everything since is the live suite, test support, the
+offline plugin and docs. `git diff main...HEAD -- src/energydata/utils src/energydata/energidataservice`
+is empty too. Run here, no key in the environment:
+
+| Gate | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` | `All checks passed!` / `92 files already formatted` (also after my doc edits) |
+| `mypy` | `Success: no issues found in 57 source files` |
+| `pytest` (plain, no key) | `2726 passed, 21 deselected, 1 warning in 114.90s` (the warning is the `utils/frames.py` pandas deprecation noted at step 4); the six package suites alone `781 passed`, `test_minstroem_spec.py` `210 passed` |
+| `stop_gate.structure_problems` / `stray_test_files` / `missing_init_files` | `[]` / `[]` / `[]` |
+
+| # | Criterion | Met | Evidence |
+|---|---|---|---|
+| A1 | Forecast (primary goal) | yes | Unchanged package (empty diff since the first audit, whose runs against the mock stand): `get_forecast_prices` `prices.py:105-162`, `_fetch_forecast` `prices.py:280-310`. The tests of the first audit are green again in the 2726 (`test_the_forecast_is_an_hourly_frame_with_gaps_and_nulls_as_nan`, `..._attrs_are_exactly_the_documented_four`, `test_an_empty_forecast_is_the_documented_empty_frame`, `test_the_forecast_capability_is_named_whichever_route_finds_it_missing`). Live: `test_live_forecast_prices` and `test_live_forecast_hours_are_whole_local_hours_and_unique` pass through the plugin, and report `forecast: 48 hours ..., region DK1, DKK, first 0.680, last 0.670`, or `forecast: EMPTY` under `empty_forecast`. |
+| A2 | Combined series | yes | Unchanged package, same tests green (`test_confirmed_then_forecast_with_the_flag_and_confirmed_winning_the_overlap`, `..._a_confirmed_gap_before_the_last_confirmed_hour_is_not_filled_...`, `test_a_confirmed_hour_never_follows_a_forecast_hour`). The live tests now meet the `<NA>` hours A2 promises: `neither 1` under `hole`, `neither 21` under `gappy_forecast`, `neither 12` under `empty_forecast`, all `21 passed`; the open end, the closed end and the cross-check against `get_prices` and `get_forecast_prices` each report (`combined cross-check: 61 confirmed hours match get_prices, 12 forecast hours match get_forecast_prices`). |
+| A3 | Addresses | yes | Unchanged `_address_frame`; `test_minstroem_addresses.py` (49) green; live `test_live_addresses_shape` passes, also with no address (`no_addresses`). |
+| A4 | Address default | yes | Unchanged `_resolve_address`; the series tests green; live `test_live_address_default` covers one address, one without forecast, several (`two_addresses`, `ValueError as designed`) and none (`no_addresses`). |
+| A5 | Series | yes | Unchanged `_fetch_series` and period resolution; `test_minstroem_series.py`, `_usage.py`, `_costs.py`, `_prices.py` green; the live tests cover every aggregation and both resolutions. |
+| A6 | Long periods | yes | Unchanged `_windows`; the window tests green; live `test_live_hourly_consumption_over_two_windows` (`9601 rows, 0 missing` against the mock). |
+| A7 | Errors and key | yes | Unchanged `client.py`; the client tests green. The live wrong-key test now asserts a computed boolean (a failed assertion would not print the key through pytest's own introspection); in the run with `prices_not_found`, `grep -c` finds no line of the whole output (summary, failures, short summary) holding the dummy key or the address id. |
+| A8 | Tests | **yes** (was partially) | See "A8 in detail" below. |
+| A9 | Docs | yes | README "Min Strøm" section (`README.md:111-167`) with the key setup, the forecast example, the eight-function table, the missing-is-NaN and `attrs` notes, the live line and, new since the first audit, the `--showlocals` warning and the address-id note; `STRUCTURE.md` and `.claude/rules/structure-minstroem.md` describe the plugin, its nine scenarios and its clock pin; the five `structure-auditor` edits are applied (below); the 18 docs, README and structure tests of `test_minstroem_spec.py` (`-k "docs or readme or structure or rules"`) green. |
+
+#### A8 in detail
+
+The first audit's unmet part was `test_live_prices_with_forecast_open_end` crashing with
+`TypeError: boolean value of NA is ambiguous` on an hour with neither source. I checked that the
+fix removes the class, not the instance, and then asked the three questions the brief set.
+
+**The defect class is gone.** The live file has no `list.count`, `== True/False`, `bool()`,
+`tolist()` loop or `if flags` over a `boolean`-dtype value (a sweep of `.count(`, `== True|False`,
+`is True|False`, `tolist(`, `bool(`, `.all()`, `.any()`: every remaining hit is a Python-bool
+`attrs` value or a plain-bool NumPy result). The counts use `flags.eq(False).sum()`,
+`flags.eq(True).sum()` and `flags.isna().sum()` (`tests/test_minstroem_live.py:293-297`) and the
+ordering check goes through `_hours` (`:213-216`), which treats `<NA>` as neither. The first
+audit's three live-suite observations are resolved: both combined tests also call
+`_need(address, "prices")` (`:277`, `:312`); `.map(pd.notna).all()` is `.map(math.isfinite).all()`
+(`:261`); a failed request no longer carries the address id (see below).
+
+**Will it pass or skip cleanly on real data?** I could only run it through the in-repo plugin
+(`-p minstroem_live_mock`, a dummy key, the README line's flags, the mock refusing every real
+transport) and, for shapes the plugin has no scenario for, through three scratch plugins in the
+scratchpad (not committed). Results, real clock:
+
+| Shape of data | Result |
+|---|---|
+| `plain` | `21 passed in 0.94s`, `neither 0` |
+| `hole` (two confirmed hours missing, one null total) | `21 passed`, `neither 1` |
+| `gappy_forecast` (forecast starts after a gap, with holes and nulls) | `21 passed`, `neither 21`, `forecast ... first nan` formatted without error |
+| `empty_forecast` | `21 passed`, `forecast: EMPTY`, `0 forecast hours match` |
+| `two_addresses` | `21 passed`, default address test `ValueError as designed` |
+| `no_prices` / `no_forecast` | `14 passed, 7 skipped` / `16 passed, 5 skipped`, the reason names the capability |
+| `no_addresses` | `4 passed, 17 skipped`, the reason `the account has no addresses` |
+| `prices_not_found` | the six price tests fail as designed with status, code, reason and request id and the address as `<address>` |
+| scratch: no confirmed price rows and nothing generated at all | `21 passed`; `49 NaN, mean nan` and `49 missing, sum 0.0 kWh` print without error |
+| scratch: `/me/addresses` answers 403 `plus_required` | see observation 1 |
+
+The suite makes 31 requests (counted on the mock: 5 address lookups, 9 forecast, 8 prices, 6
+consumption, 1 each of costs, revenue and solar export), under the 60 a minute, and the client
+retries a 429 after its `Retry-After` regardless. The wiring checks all hold:
+plain `pytest tests/test_minstroem_live.py` with a key set gives `21 deselected`; `-m live` with
+no key `21 skipped` with the reason; with a blank key `21 skipped`; `-m live --collect-only` with
+a key `21 tests collected`. None of these can send a request (they collect, deselect or skip).
+The spec suite's subprocess runs were read for the same property: every run that sets a
+non-blank key either loads the plugin, only collects, or runs the deselected expression.
+
+**Is the output readable and anonymous?** A passing run prints the `MIN STRØM LIVE SUMMARY` block,
+21 lines, one per test, then `short test summary info` with one `PASSED` or `SKIPPED` line per
+test (and the full skip reason once per reason):
+
+```
+addresses: 1, regions ['DK1'], forecast-capable 1
+forecast: 48 hours 2026-10-26T19:00:00+01:00 .. 2026-10-28T18:00:00+01:00, region DK1, DKK, first 0.680, last 0.670
+combined (today..): 67 hours 2026-10-26T00:00:00+01:00 .. 2026-10-28T18:00:00+01:00, confirmed 36, forecast 31, neither 0
+combined cross-check: 61 confirmed hours match get_prices, 12 forecast hours match get_forecast_prices
+PROBE /prices with to=+3 days: accepted, 36 priced rows
+wrong key: HTTP 401 invalid_token
+unknown address: HTTP 404 resource_not_found
+```
+
+It holds the region, counts, time spans, a few rounded values, never the key, an address id or
+the address text. The only non-ASCII character is `ø` (and `Ø`), which every Windows code page
+the user can have encodes. A failing request reads
+`AssertionError: a request failed: MinStroemError: Min Strøm API: HTTP 404 resource_not_found on
+/me/addresses/<address>/prices: ... (request id ...) [status=404 error_code=... reason=... request_id=...]`
+and nothing else of the package's frames, which is what support needs.
+
+**Is the README's PowerShell line exactly what the user should run?** Yes.
+
+```powershell
+$env:MINSTROEM_API_KEY='<din-nøgle>'; .venv\Scripts\python.exe -m pytest tests/test_minstroem_live.py -m live -rA --tb=short -p no:cacheprovider; Remove-Item Env:MINSTROEM_API_KEY
+```
+
+It is the line of guide step 13, one line, key inline, run from the repo root, and `README.md:160`
+equals it (`test_minstroem_spec.py` pins it as `LIVE_COMMAND`). `.venv\Scripts\python.exe` is the
+interpreter the README's own setup creates (`python -m venv .venv`, `pip install -e ".[dev]"`);
+`-m live` overrides `addopts`' `-m 'not live'` (the last `-m` wins, shown above); `--tb=short` is
+the style the anonymity guarantee was verified under together with `auto`, `long` and `native`;
+`-rA` gives the per-test lines; `Remove-Item` runs even when pytest fails because the separator is
+`;`. The one thing that would defeat the anonymity, `-l`, is warned about in the README and the
+module docstring.
+
+**Observations, not blocking and not an unmet criterion** (A8 does not promise a tidy report for
+every failure, and nothing here is the crash the first audit found):
+
+1. *A failure of `/me/addresses` is reported once per dependent test.* The `live_client` and
+   `address` fixtures are module-scoped and not wrapped by `_anonymous_failures`, so with a key that
+   is wrong, expired, without Plus or rate-limited, the 17 tests that need the address each end as
+   an `ERROR at setup` (`3 failed, 1 passed, 17 errors`; the 3 failures are the tests that call the endpoint themselves: two report the failed request anonymously through the decorator, the wrong-key test fails because the scratch mock answers 403 where it wants 401) with the same chained traceback of about 37 lines (scratch run, 403
+   `plus_required`: facts present at the foot, `status=403 plus_required`, request id; no key, no
+   id, because `/me/addresses` has no id in its path). The first lines tell the user what is wrong;
+   the paste is just long. A candidate for a `DEVELOPMENT.md` note at step 8 (wrap the fixture's
+   `get_addresses` in the same anonymiser, or skip-with-reason once).
+2. *One assertion can fail on real data without a package defect.* `test_live_forecast_prices`
+   requires the first forecast hour to be no earlier than the current hour minus one (guide step
+   12). If the real forecast starts in the past, the test fails and says so; that is a finding the
+   live run exists to produce.
+3. Not-unmet but worth knowing: the spec suite grew to 210 tests (about 83 s) because each scenario
+   is a pytest subprocess of 21 tests; the whole plain `pytest` is now about 2 minutes.
+
+#### Drift found, and what was done about it
+
+| Finding | Kind | Resolution |
+|---|---|---|
+| A8's `<NA>` crash from the first audit | code (test) wrong | Fixed by the step 3 re-run, red first (section 3), guarded by `test_every_live_test_passes_against_the_mock_in_every_shape_of_data` for `hole`, `gappy_forecast` and `empty_forecast`; I re-ran it and found the class gone. No second send-back. |
+| Out of scope (Enterprise API, writes, caching or vintage history, restructuring `tests/`) | none | Nothing built: `src/` is unchanged; `tests/` is still flat with the `test_minstroem_*` prefix; the plugin is a support module, not a test folder. |
+| Connections and surface | none | Package surface unchanged: seventeen names, no `main` exported; no `utils` or `energidataservice` source touched on the branch. `tests/minstroem_live_mock.py` is test support (`SCENARIOS`, `build_service`, two hooks) outside the package and outside what the concept promises users. |
+| Showcase | none | All six `python -m energydata.minstroem.<module>` exit 0 without a key; `_series` prints its two windows and the refused month start; with-key branches exercised at step 4 (re-run). |
+| Structure-auditor edit 1 (rules file: "just before one" not a committed test; add the `gappy_forecast` times of day) | stale purpose | **Applied.** `PINNED_INSTANTS` (`test_minstroem_spec.py:1170`) holds both change days, the day after each, the repeated hour (first, second, on the hour) and `hole` at `2026-10-27T00:00:00+01:00`; no 23:59:59 run is committed. |
+| Structure-auditor edit 2 (rules file: an unknown or absent `MINSTROEM_ADDRESS_ID`) | stale purpose | **Applied.** The fixture skips with `MINSTROEM_ADDRESS_ID is not an address of this account` / `the account has no addresses`; the spec test asserts the first (`:1761`). |
+| Structure-auditor edit 3 (rules file named private `_Address`, `_Private`) | private name leaked | **Applied**, reworded to "a `dict` subclass" and "`str` subclasses"; `_Address` also collides with the unrelated dataclass in `_series.py`. |
+| Structure-auditor edit 4 (rules file: the mock's UUID `X-Request-ID`s) | stale purpose | **Applied**; `test_the_mocks_request_ids_are_uuids_like_the_specs_header` (`:2084`). |
+| Structure-auditor edit 5 (`STRUCTURE.md` README line "human setup guide", older than the branch) | stale purpose | **Applied**: the README now documents all three sources and the live command. |
+
+`stop_gate.structure_problems` is `[]` after the edits; `ruff check .`, `ruff format --check .` and
+the spec suite's 18 docs tests re-run clean.
 
 ---
 
