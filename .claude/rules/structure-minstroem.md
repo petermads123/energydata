@@ -90,14 +90,15 @@ alignment, the calendar index, window splitting against every cap, payload check
 resolution, client lifecycle) and `MinStroemService` itself; `addresses`, `usage`, `costs` and
 `prices` each endpoint family's columns, dtypes, `attrs`, nulls and the forecast and combined series
 (`prices` holds the primary goal); `spec` the package against the OpenAPI fixture (paths, query
-parameters, fields, enums, the spec's own examples and error responses, the mock's bodies), the
+parameters, fields, enums, the spec's own examples and error responses, the mock's bodies and its UUID `X-Request-ID`s), the
 live suite's wiring (run in a subprocess), the exports, the showcases and the docs.
 
 `tests/test_minstroem_live.py` holds the live suite: every test is
 marked `live`, skipped without `MINSTROEM_API_KEY` (a blank key counts as none, as the client
 strips it), and plain `pytest` deselects it (`addopts = "-v -m 'not live'"`). It shares one
 module-scoped client; the address under test is `MINSTROEM_ADDRESS_ID` when set (matched without
-regard to case or surrounding space), else the first address with `forecastPrices`, else the
+regard to case or surrounding space; an id the account does not have skips every test that needs
+an address, as does an account with none), else the first address with `forecastPrices`, else the
 first address; a test whose capability that address lacks is skipped naming the capability (the
 combined-series tests need both `forecastPrices` and `prices`); each test adds a `live_report`
 line, never the key, an address text or an address id. The `is_forecast` column is read with
@@ -116,8 +117,8 @@ with an `AssertionError` instead, a `MinStroemError` showing its message, status
 reason and request id (a UUID, kept as it is) and a `RetryError` its message, with every other
 UUID (an address id) replaced by `<address>`, the chained error suppressed and the traceback cut
 at the test's own frame, because the frames below it have the request path as an argument and
-`--tb=long` prints it. The address the tests pass around is an `_Address` (a `dict` whose `repr`
-is `<address>`) and its id and the keys are `_Private` strings (`repr` `<private>`), which is
+`--tb=long` prints it. The address the tests pass around is a `dict` subclass whose `repr`
+is `<address>`, and its id and the keys are `str` subclasses whose `repr` is `<private>`, which is
 what pytest prints for the arguments of a frame. The package's own messages are unchanged.
 
 `tests/minstroem_live_mock.py` is a pytest plugin that runs that live suite offline:
@@ -159,10 +160,10 @@ summary line per test that reported (and, for `plain`, the exact lines at the pi
 key, address id or address text is in the output, and, for `prices_not_found`, that the failures
 keep their facts, request id included, and lose the id under every `--tb` style. It also runs the
 suite with the clock on and the day after each daylight-saving change, in each pass of the
-repeated autumn hour, at local midnight and just before one; with a padded key; and with
+repeated autumn hour and on its hour, and at local midnight; with a padded key; and with
 `MINSTROEM_ADDRESS_ID` set to each address, in upper case, padded and unknown. And it builds
 `plain`, `hole`, `gappy_forecast` and `two_addresses` in process on the spring and autumn change
-days and an ordinary day; runs probes of the plugin (the key, scenario and instant it refuses, a
+days and an ordinary day, and `gappy_forecast` alone at six times of day from local midnight to 23:30; runs probes of the plugin (the key, scenario and instant it refuses, a
 padded key, variables left in the shell, a module-scoped fixture, a client given a real
 transport, setup and teardown in process); and checks the live suite's helpers in process (what a
 failure report keeps and removes, the traceback cut, what passes through untouched, the cross-check
