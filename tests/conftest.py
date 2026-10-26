@@ -216,10 +216,15 @@ def minstroem_address(
 def minstroem_price_row(
     start: datetime, total: float | None, variable: float | None = 0.25
 ) -> dict[str, Any]:
-    """One hourly price or forecast row starting at the aware instant `start`."""
+    """One hourly price or forecast row starting at the aware instant `start`.
+
+    The hour is added in UTC: adding it to a Copenhagen-time `datetime` would be
+    wall-clock arithmetic and give a two-hour row across the autumn change.
+    """
+    begin = start.astimezone(UTC)
     return {
-        "start": start.astimezone(UTC).strftime(_API_TIME),
-        "end": (start + timedelta(hours=1)).astimezone(UTC).strftime(_API_TIME),
+        "start": begin.strftime(_API_TIME),
+        "end": (begin + timedelta(hours=1)).strftime(_API_TIME),
         "totalPricePerKWh": total,
         "variableChargesPerKWh": variable,
     }
