@@ -1,6 +1,6 @@
 # Min Strøm Consumer API, with price forecasts first
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -200,10 +200,10 @@ for the requested interval, in order; a row the API did not return is NaN (float
 |---|---|---|---|
 | `BASE_URL: str = "https://api.minstroem.app/consumer/v1"` | `client.py` | The Consumer API root. | A7 |
 | `API_KEY_ENV: str = "MINSTROEM_API_KEY"` | `client.py` | The environment variable read when no key is passed. | A7, A8 |
-| `class MinStroemError(Exception)` with `__init__(self, message: str, *, status: int \| None = None, error_code: str \| None = None, reason: str \| None = None, request_id: str \| None = None) -> None` and attributes `status`, `error_code`, `reason`, `request_id` | `client.py` | An API error response, an exhausted retry or holdoff on a response, or a payload that is not what the spec promises (then `status` is the 2xx status and `error_code` is `None`). `str()` is the message only. | A7 |
+| `class MinStroemError(Exception)` with `__init__(self, message: str, *, status: int \| None = None, error_code: str \| None = None, reason: str \| None = None, request_id: str \| None = None) -> None` and attributes `status`, `error_code`, `reason`, `request_id` | `client.py` | An API error response or an exhausted retry or holdoff on a response (all four attributes from the response), a 2xx body that is not JSON or not a JSON object (`status` 200, `error_code` `None`), or any other check that fails (a payload whose fields or rows are not what the spec promises, an unusable key, a missing capability flag, sources disagreeing on currency or VAT): all four attributes `None`. `str()` is the message only. *(Corrected at step 4, see section 3.)* | A7 |
 | `class MissingApiKeyError(MinStroemError)` | `client.py` | Raised by the first request when the client has no key; message names `API_KEY_ENV`. All four attributes `None`. | A7 |
 | `MinStroemClient(api_key: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `client.py` | `ApiClient` on `BASE_URL`. `api_key=None` reads `API_KEY_ENV` at construction; the key is stripped, and an empty result counts as none. A key that is not entirely `[\x21-\x7e]` (control characters, inner whitespace, non-ASCII) is kept out of the headers and refused at the first request with a `MinStroemError` saying the key has characters an HTTP header cannot carry — never echoing it. Never fails for a missing or bad key at construction. `max_concurrency < 1` is a `ValueError`. `__repr__` returns `MinStroemClient(key=set)` / `MinStroemClient(key=missing)` — never the key. Property `has_api_key: bool`. | A7 |
-| `async MinStroemClient.fetch_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | One `GET` through `ApiClient.request` with `Authorization: Bearer <key>`; returns the JSON object. Maps `httpx.HTTPStatusError`, and `RetriesExhaustedError`/`HoldoffTooLongError` that carry a response, to `MinStroemError` (chained) with status, `errorCode`, `reason` (from the body when it is the documented error object, else `None`) and `X-Request-ID`. A `RetriesExhaustedError` without a response (transport failure) propagates unchanged. A 2xx body that does not parse (`ParseError`) or is not a JSON object is a `MinStroemError` (`status` the 2xx status, `error_code` `None`), chained. `MissingApiKeyError` (or the bad-key `MinStroemError`) before any I/O. Only awaitable on the client's loop. | A7 |
+| `async MinStroemClient.fetch_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | One `GET` through `ApiClient.request` with `Authorization: Bearer <key>`; returns the JSON object. Maps `httpx.HTTPStatusError`, and `RetriesExhaustedError`/`HoldoffTooLongError` that carry a response, to `MinStroemError` (chained) with status, `errorCode`, `reason` (from the body when it is the documented error object, else `None`) and `X-Request-ID`. A `RetriesExhaustedError` without a response (transport failure) propagates unchanged. A 2xx body that does not parse (`ParseError`) or is not a JSON object is a `MinStroemError` (`status` 200, `error_code` `None`), chained. `MissingApiKeyError` (or the bad-key `MinStroemError`) before any I/O. Only awaitable on the client's loop. | A7 |
 | `MinStroemClient.get_json(path: str, params: Mapping[str, str] \| None = None) -> dict[str, JsonValue]` | `client.py` | Sync form through `run`. | A7 |
 | `type Aggregation = Literal["hour", "day", "month", "year"]`, `AGGREGATIONS: tuple[Aggregation, ...]` | `_series.py`, re-exported | Usage, cost and revenue intervals, API spelling. | A5 |
 | `type PriceResolution = Literal["hour", "fifteenMinutes"]`, `PRICE_RESOLUTIONS: tuple[PriceResolution, ...]` | `_series.py`, re-exported | Historical price intervals, API spelling. | A5 |
@@ -445,6 +445,18 @@ Built as planned, with these small departures:
 - A 2xx body that is not valid JSON is a `MinStroemError` with `status=200` rather than
   "the 2xx status": `ApiClient.request` does not expose the response, and a GET success is
   200. Public signatures are unchanged.
+- *(Recorded at step 4; a step 3 omission.)* The `MinStroemError` row of the Public API table
+  said a payload "not what the spec promises" carries the 2xx status. Only `fetch_json`'s two
+  checks (body not JSON, body not a JSON object) do, with `status=200`. Every other payload
+  check (`_parse`, `_build`, `_address_frame`, the forecast checks, the currency/VAT
+  agreement checks) and the key and capability checks raise `MinStroemError` with `status`,
+  `error_code`, `reason` and `request_id` all `None`: those checks run on a parsed `data`
+  list, after `fetch_json` has dropped the response, and a status would say nothing a caller
+  could act on. The `fetch_json` row of the plan was precise and is met; the class-row
+  wording was loose and is corrected in section 2. A7 promises the four attributes for "an
+  API error", which these are not, so section 1 is untouched. Step 5's T7 should assert
+  `status == 200` only for the not-JSON and not-an-object bodies, and `status is None` for
+  a well-formed JSON object whose rows are wrong.
 - The Public API table's `main()` for `client.py` lists addresses' regions and capabilities,
   as planned; the shared "no key, print one line" check is a private helper
   `_showcase_has_key` in `client.py`, imported by the other modules.
@@ -464,12 +476,88 @@ Built as planned, with these small departures:
 
 | Check | Result |
 |---|---|
-| `ruff check .` | |
-| `ruff format --check .` | |
-| `mypy` | |
-| Plan completeness | every signature in the Public API table exists as written |
-| `STRUCTURE.md` | in sync |
-| `python -m <package>.<module>` | |
+| `ruff check .` | `All checks passed!` (first run and after the doc edits) |
+| `ruff format --check .` | `84 files already formatted` |
+| `mypy` | `Success: no issues found in 49 source files` |
+| `pytest` | `1735 passed, 18 deselected, 1 warning` (the 18 are the live tests, deselected by `addopts`; the warning is a pandas deprecation in `utils/frames.py`, not in this round). No code changed at step 4, so the first run was already green. |
+| Plan completeness | every signature in the Public API table exists as written; one wording mismatch in the table itself, fixed (below) |
+| `STRUCTURE.md` | in sync, after the auditor's nine edits (below); `stop_gate.structure_problems` reports only the seven offline test files that step 5 writes |
+| `python -m <package>.<module>` | all six modules exit 0 without a key (below) |
+
+### Plan completeness
+
+Checked by `inspect.signature` against the Public API table, then by reading each module.
+
+| Plan entry | Result |
+|---|---|
+| `BASE_URL`, `API_KEY_ENV` | met, values as planned |
+| `MinStroemError` (signature, four attributes) | met; **deviation** in the table's description, below |
+| `MissingApiKeyError(MinStroemError)` | met; all four attributes `None` |
+| `MinStroemClient.__init__` (signature, `max_concurrency < 1` a `ValueError` from `ApiClient`, key stripped, bad key refused at first request, `__repr__`, `has_api_key`) | met; `max_concurrency=0` gives `ValueError`, `repr` is `MinStroemClient(key=set)` / `(key=missing)` |
+| `async fetch_json`, `get_json` | met; `fetch_json` is a coroutine function |
+| `Aggregation`, `AGGREGATIONS`, `PriceResolution`, `PRICE_RESOLUTIONS` | met, re-exported |
+| `get_addresses`, `get_consumption`, `get_solar_export`, `get_consumption_costs`, `get_solar_export_revenue`, `get_prices`, `get_forecast_prices`, `get_prices_with_forecast` | met: parameter names, keyword-only markers, defaults, annotations and return types equal the table |
+| `main()` in every module | met: `client`, `_series`, `addresses`, `usage`, `costs`, `prices` |
+| `__init__.py` re-exports | met: the fifteen names of guide step 10 and nothing else (`main` is not exported) |
+| Spec fixture, `pyproject.toml` marker and `addopts`, `tests/conftest.py`, `tests/test_minstroem_live.py`, README section and PowerShell line, `STRUCTURE.md`, the three rules files | present |
+
+- **Missing:** none.
+- **Unplanned:** none. The public names of each module are exactly the planned ones; every
+  helper (`_showcase_has_key`, `_api_error`, `_Endpoint`, ...) starts with `_`.
+- **Deviation, not recorded at step 3:** the `MinStroemError` row said a payload that is not
+  what the spec promises carries the 2xx status. The code does that only in `fetch_json`
+  (`status=200` for a body that is not JSON or not an object) and leaves all four attributes
+  `None` for every other check. The code stands; recorded in section 3 and the plan row
+  corrected in section 2. It does not touch section 1 (A7 covers API errors).
+
+### `structure-auditor`
+
+The auditor ran before this step and returned nine edits (eight in
+`.claude/rules/structure-minstroem.md`, one in `STRUCTURE.md`). Each was checked against the
+code and `tests/conftest.py` as they stand; no code changed at this step, so none was
+superseded. All nine applied:
+
+1. `MinStroemError` and `fetch_json` rows: the real `status` behaviour (this is the
+   deviation above). Applied.
+2. `get_forecast_prices` row: `attrs` keys named, no `resolution`, empty-frame index. Applied.
+3. Tests section: the conftest support with full signatures (`ADDRESS_ID`, `minstroem_address`,
+   `minstroem_price_row`, `MinStroemService`, its caps and `calls`/`client`), `_no_network`
+   named as "the no-network guard". Applied.
+4. `get_prices_with_forecast` row: `is_forecast` values, the end rules, `attrs`, capability.
+   Applied.
+5. Shared paragraph: the `address_id=None` rules. Applied.
+6. `_series.py`: dropped the private `_gather_ordered` name, typed the tuples; Tests: full file
+   names. Applied.
+7. Intro and `_series.main` row: which showcases are offline. Applied.
+8. Live-suite sentence: address choice, skips, report lines. Applied.
+9. `STRUCTURE.md`: `client.py` exports and the conftest helpers and fixtures. Applied.
+
+### Showcases (`python -m energydata.minstroem.<module>`, `MINSTROEM_API_KEY` unset)
+
+Every module exits 0 and prints the one-line notice; each also prints the expected
+`RuntimeWarning` for a module re-exported from `__init__.py`. `_series` is offline and prints
+its two calendar windows and the refused month start:
+
+```
+costs per hour: 2 windows over 2025-03-01 to 2026-04-01
+  2025-03-01T00:00:00+01:00 -> 2026-03-01T00:00:00+01:00
+  2026-03-01T00:00:00+01:00 -> 2026-04-01T00:00:00+02:00
+refused: start must be the first of a month at local midnight for interval 'month', got '2026-03-15T00:00:00+01:00'
+Set MINSTROEM_API_KEY to run this showcase against the live Min Strøm API.
+```
+
+There is no key in this environment, so the with-key branches were exercised instead
+against the in-repo `MinStroemService` mock (a scratch script that sets a fake key and gives
+the client the mock transport; nothing committed). All six `main()` ran to the end and
+printed: 1 address in `DK1` with its capabilities; consumption per day `(7, 2)`; solar export
+per hour `(24, 2)`; costs per month `(1, 5)` in `DKK`; revenue per day `(7, 5)`; a 29-hour
+forecast with `fetched_at`; the combined series; and quarter-hourly history `(100, 2)` for
+the 25-hour day 2026-10-25. (The combined series showed 0 forecast hours there only because
+the mock generates confirmed rows for every requested hour, so confirmed wins everywhere, as
+specified; the real API is the live suite's to check.) The showcases are in the required form:
+every argument a named variable, the call on its own line, the result named then printed, and
+the fixed-set arguments (`aggregation`, `resolution`, `interval`, `family`) carry their
+accepted values in a same-line comment.
 
 ---
 
