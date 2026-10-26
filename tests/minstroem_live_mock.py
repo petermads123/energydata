@@ -12,15 +12,23 @@ The scenarios are the shapes of data the real API makes ordinary and a test
 written against a tidy mock would never meet: a missing confirmed hour, a
 forecast that starts after a gap and has holes in it, no forecast at all, an
 address without a capability, several addresses, and a failing endpoint.
+
+The data is laid out around the instant the run starts, and the package and the
+live tests read the clock themselves (the confirmed-price cap, `fetched_at`, "today"
+in the tests), so a run that straddles an hour or local midnight could meet data laid
+out for the wrong day. `MINSTROEM_LIVE_NOW` pins the clock: an ISO 8601 instant with
+an offset, around which the data is laid out and to which `pandas.Timestamp.now` is
+fixed for the whole run. Left unset, the run uses the real clock.
 """
 
 import os
-from collections.abc import Collection
-from datetime import UTC, datetime, time, timedelta
+from collections.abc import Callable, Collection
+from datetime import UTC, datetime, time, timedelta, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
+import pandas as pd
 import pytest
 from conftest import (
     ADDRESS_ID,
@@ -34,6 +42,7 @@ from energydata.minstroem import API_KEY_ENV, MinStroemClient
 from energydata.utils import DEFAULT_TIMEOUT, RetryPolicy
 
 SCENARIO_ENV = "MINSTROEM_LIVE_MOCK"
+NOW_ENV = "MINSTROEM_LIVE_NOW"
 SECOND_ADDRESS_ID = "0e8d1c3a-7b49-4f0e-9d2a-3c6b5a4d7e91"
 SCENARIOS = (
     "plain",
@@ -162,14 +171,52 @@ def build_service(scenario: str, now: datetime, api_key: str) -> MinStroemServic
     return service
 
 
+def _pinned_now(raw: str | None) -> datetime | None:
+    """The instant `NOW_ENV` pins the clock to, or None when it is unset or empty.
+
+    Raises:
+        pytest.UsageError: If the value is not an ISO 8601 instant with an offset.
+    """
+    if not raw:
+        return None
+    try:
+        pinned = datetime.fromisoformat(raw)
+    except ValueError:
+        pinned = None
+    if pinned is None or pinned.tzinfo is None:
+        raise pytest.UsageError(
+            f"{NOW_ENV} must be an ISO 8601 instant with an offset, "
+            f"like 2026-06-15T12:00:00+02:00, got {raw!r}"
+        )
+    return pinned.astimezone(UTC)
+
+
+def _fixed_clock(pinned: datetime) -> Callable[[tzinfo | str | None], pd.Timestamp]:
+    """A stand-in for `pandas.Timestamp.now` that always returns `pinned`."""
+
+    def now(tz: tzinfo | str | None = None) -> pd.Timestamp:
+        if tz is None:
+            return pd.Timestamp(pinned.astimezone().replace(tzinfo=None))
+        return pd.Timestamp(pinned).tz_convert(tz)
+
+    return now
+
+
 def pytest_configure() -> None:
-    """Give every `MinStroemClient` the transport of the scenario's mock."""
+    """Give every `MinStroemClient` the transport of the scenario's mock.
+
+    With `NOW_ENV` set, the data is laid out around that instant and
+    `pandas.Timestamp.now` is fixed to it until `pytest_unconfigure`.
+    """
     key = os.environ.get(API_KEY_ENV)
     if not key:
         raise pytest.UsageError(f"minstroem_live_mock needs a dummy {API_KEY_ENV}")
+    pinned = _pinned_now(os.environ.get(NOW_ENV))
     service = build_service(
-        os.environ.get(SCENARIO_ENV, "plain"), datetime.now(UTC), key
+        os.environ.get(SCENARIO_ENV, "plain"), pinned or datetime.now(UTC), key
     )
+    if pinned is not None:
+        _PATCHES.setattr(pd.Timestamp, "now", staticmethod(_fixed_clock(pinned)))
     original = MinStroemClient.__init__
 
     def routed(
@@ -194,7 +241,7 @@ def pytest_configure() -> None:
 
 
 def pytest_unconfigure() -> None:
-    """Restore `MinStroemClient`."""
+    """Restore `MinStroemClient` and the clock."""
     _PATCHES.undo()
 
 

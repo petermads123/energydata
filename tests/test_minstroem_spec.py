@@ -19,7 +19,12 @@ import httpx
 import pandas as pd
 import pytest
 from conftest import ADDRESS_ID, MinStroemService, minstroem_price_row
-from minstroem_live_mock import SCENARIOS, SECOND_ADDRESS_ID, build_service
+from minstroem_live_mock import (
+    NOW_ENV,
+    SCENARIOS,
+    SECOND_ADDRESS_ID,
+    build_service,
+)
 
 import energydata.minstroem as package
 from energydata.minstroem import (
@@ -845,6 +850,10 @@ def test_the_summary_lists_the_lines_in_the_order_they_were_reported(
 
 LIVE_PLUGIN = "minstroem_live_mock"
 DUMMY_KEY = "dummy-key-for-the-offline-live-run"
+# Every subprocess run pins the plugin's clock, so the data the mock is laid out around
+# and the "today" the package and the live tests read are one instant: a run that
+# straddles an hour or local midnight cannot meet data laid out for another day.
+PINNED_NOW = "2026-06-15T12:00:00+02:00"
 LIVE_TEST_COUNT = 21  # 18 functions, consumption once per aggregation
 
 NEEDS_PRICES = {
@@ -880,8 +889,8 @@ class _LiveRun(NamedTuple):
     outcomes: dict[str, str]  # test name -> passed, failure, error or skipped
 
 
-def _run_live_suite(scenario: str, tmp_path: Path) -> _LiveRun:
-    """Run the whole live suite against the mock for `scenario`, in a fresh process."""
+def _run_live_suite(scenario: str, tmp_path: Path, now: str = PINNED_NOW) -> _LiveRun:
+    """Run the whole live suite against the mock for `scenario` at the instant `now`."""
     report = tmp_path / "live.xml"
     result = _pytest(
         [
@@ -897,6 +906,7 @@ def _run_live_suite(scenario: str, tmp_path: Path) -> _LiveRun:
         env={
             API_KEY_ENV: DUMMY_KEY,
             "MINSTROEM_LIVE_MOCK": scenario,
+            NOW_ENV: now,
             "PYTHONPATH": f"{REPO / 'tests'}{os.pathsep}{REPO / 'src'}",
         },
     )
@@ -1070,6 +1080,122 @@ def test_a_client_made_with_no_transport_is_answered_by_the_mock():
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "2 passed" in result.stdout
+
+
+# (scenario, the instant the clock is pinned to): the days the live tests' date
+# arithmetic has to survive, and local midnight, which used to be a race.
+PINNED_INSTANTS = [
+    pytest.param("plain", "2026-03-29T12:00:00+02:00", id="spring-change-day"),
+    pytest.param("plain", "2026-03-30T12:00:00+02:00", id="day-after-spring-change"),
+    pytest.param("plain", "2026-10-25T12:00:00+01:00", id="autumn-change-day"),
+    pytest.param("plain", "2026-10-26T12:00:00+01:00", id="day-after-autumn-change"),
+    pytest.param("hole", "2026-10-27T00:00:00+01:00", id="hole-at-local-midnight"),
+]
+
+
+@pytest.mark.parametrize(("scenario", "now"), PINNED_INSTANTS)
+def test_every_live_test_passes_whichever_instant_the_clock_is_pinned_to(
+    tmp_path: Path, scenario: str, now: str
+) -> None:
+    run = _run_live_suite(scenario, tmp_path, now)
+
+    output = run.result.stdout
+    assert run.result.returncode == 0, output
+    assert len(run.outcomes) == LIVE_TEST_COUNT, output
+    assert {o for o in run.outcomes.values()} == {"passed"}, output
+    least, most = EXPECTED_NEITHER[scenario]
+    assert least <= _neither(output) <= most, output
+
+
+CLOCK_PROBE = """
+import pandas as pd
+import pytest
+
+from energydata.minstroem import get_forecast_prices
+
+PINNED = pd.Timestamp("2026-06-15T12:00:00+02:00")
+
+
+@pytest.mark.live
+def test_the_clock_is_the_pinned_instant_in_any_zone():
+    assert pd.Timestamp.now(tz="Europe/Copenhagen") == PINNED
+    assert pd.Timestamp.now(tz="UTC") == PINNED
+    assert str(pd.Timestamp.now(tz="Europe/Copenhagen").tz) == "Europe/Copenhagen"
+    assert pd.Timestamp.now().tzinfo is None
+
+
+@pytest.mark.live
+def test_the_package_reads_the_pinned_clock_and_the_data_is_laid_out_around_it():
+    forecast = get_forecast_prices()
+
+    assert forecast.attrs["fetched_at"] == PINNED
+    assert forecast.index[0] == PINNED.floor("h")
+"""
+
+REAL_CLOCK_PROBE = """
+from datetime import UTC, datetime
+
+import pandas as pd
+import pytest
+
+
+@pytest.mark.live
+def test_the_clock_is_the_real_one():
+    real = datetime.now(UTC)
+
+    assert abs(pd.Timestamp.now(tz="UTC") - pd.Timestamp(real)) < pd.Timedelta("1min")
+    assert pd.Timestamp.now(tz="UTC") != pd.Timestamp("2026-06-15T12:00:00+02:00")
+"""
+
+
+def test_the_plugin_pins_the_clock_for_the_package_and_the_tests(
+    tmp_path: Path,
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        CLOCK_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY, NOW_ENV: PINNED_NOW},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout
+
+
+@pytest.mark.parametrize("env", [{}, {NOW_ENV: ""}], ids=["unset", "empty"])
+def test_without_a_pinned_instant_the_plugin_leaves_the_real_clock(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        REAL_CLOCK_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY, **env},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["2026-06-15T12:00:00", "2026-06-15 12:00", "noon", " "],
+    ids=["no-offset", "no-offset-with-space", "not-a-date", "blank"],
+)
+def test_a_pinned_instant_without_an_offset_or_not_a_date_is_a_usage_error(
+    tmp_path: Path, raw: str
+) -> None:
+    result = _guard_project(
+        tmp_path,
+        REAL_CLOCK_PROBE,
+        plugins=(LIVE_PLUGIN,),
+        env={API_KEY_ENV: DUMMY_KEY, NOW_ENV: raw},
+    )
+
+    assert result.returncode != 0
+    assert NOW_ENV in result.stderr
+    assert repr(raw) in result.stderr
+    assert "passed" not in result.stdout
 
 
 def test_every_live_test_is_wrapped_to_keep_the_address_id_out_of_failures() -> None:
