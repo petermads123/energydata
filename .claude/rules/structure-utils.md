@@ -142,4 +142,4 @@ One suite per module, written at step 5. No test touches the network.
   time parsing, `None` values, empty input, duplicates, missing fields;
   `expand_to_resolution` gaps and the autumn DST hour; `conform` padding, order, never
   filling, duplicates, float64.
-- `tests/conftest.py` — the autouse no-network guard for the whole suite, plus the market-test support (see `structure-energidataservice.md`).
+- `tests/conftest.py` — the autouse no-network guard for the whole suite (a test marked `live` is exempt; the guard calls `block_real_transports`, which the `minstroem_live_mock` plugin also calls for the live tests it runs), plus the market-test support (see `structure-energidataservice.md`) and the Min Strøm support (see `structure-minstroem.md`).

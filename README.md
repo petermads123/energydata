@@ -1,8 +1,10 @@
 # energydata
 
-APIs for collecting energy data from three sources: Energinet's
-[Energi Data Service](https://www.energidataservice.dk/), [Eloverblik](https://eloverblik.dk/)
-and the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/).
+APIs for collecting energy data from four sources: Energinet's
+[Energi Data Service](https://www.energidataservice.dk/), the
+[Min Strøm](https://docs.minstroem.app/introduction) Consumer API,
+[Eloverblik](https://eloverblik.dk/) and the
+[ENTSO-E Transparency Platform](https://transparency.entsoe.eu/).
 
 ## Install as a dependency
 
@@ -105,6 +107,64 @@ tariffs = get_dso_tariffs("radius", "2026-10-15")
 
 The functions are plain synchronous calls, also from Jupyter. Several requests for one call
 run concurrently, up to a configurable cap.
+
+### Min Strøm
+
+The [Min Strøm Consumer API](https://docs.minstroem.app/introduction) serves a household's own
+metered data and its electricity prices, including an **hourly price forecast**. It needs a
+**Min Strøm Plus** subscription and an API key created in the Min Strøm iOS app. Pass the key as
+`api_key=` to `MinStroemClient`, or set the `MINSTROEM_API_KEY` environment variable; everything
+imports and constructs without one, and the first request raises `MissingApiKeyError`. The key
+never appears in an exception message or a `repr`. The API allows 60 requests a minute and 2,000
+a day; the client retries a 429 after its `Retry-After`. Only the Consumer API is covered, not
+the Enterprise API.
+
+```python
+from energydata.minstroem import get_forecast_prices, get_prices_with_forecast
+
+forecast = get_forecast_prices()  # the account's only address
+print(forecast.attrs["currency"], forecast.attrs["fetched_at"])
+
+# Confirmed prices where they exist, forecast after the last one.
+prices = get_prices_with_forecast("2026-10-26")
+```
+
+Every function returns a `pandas.DataFrame` indexed by interval start (tz-aware
+`Europe/Copenhagen`, named `time`), one row per interval of `[start, end)` on the Danish
+calendar (23 or 25 hours on a DST day). The API returns sparse rows: an interval it has no row
+for is **NaN** (`<NA>` for the boolean columns), never zero. Currency (`DKK`, `SEK` or `NOK`),
+whether VAT is included and, for the forecast, the fetch time are in `frame.attrs`. Every
+address-scoped function takes a keyword-only `address_id` (a UUID); left out, it uses the
+account's only address and raises `ValueError` for none or several (listing them). A period
+longer than an endpoint's cap is split on Copenhagen calendar boundaries and joined again. A
+bound that is not on the interval (for example `aggregation="month"` starting mid-month) is a
+`ValueError`, never silently widened. An API error raises `MinStroemError` carrying `status`,
+`error_code`, `reason` and `request_id`.
+
+| Function | Unit | Interval | Columns | Endpoint |
+|---|---|---|---|---|
+| `get_forecast_prices(*, address_id=None)` | currency/kWh incl. VAT | 1 hour, no period: the rows the API returns | `total_price_per_kwh`, `variable_charges_per_kwh`; `attrs` `fetched_at` | `GET /me/addresses/{id}/forecast-prices` (regions DK1, DK2, SE3, SE4) |
+| `get_prices_with_forecast(start, end=None, *, address_id=None)` | currency/kWh incl. VAT | 1 hour | the two price columns and `is_forecast`; confirmed wins, forecast only after the last confirmed hour | `prices` and `forecast-prices` |
+| `get_prices(start, end=None, *, resolution="hour", address_id=None)` | currency/kWh incl. VAT | `hour`, `fifteenMinutes` | `total_price_per_kwh`, `variable_charges_per_kwh` | `GET /me/addresses/{id}/prices` (366 days hourly, 90 days quarter-hourly per request) |
+| `get_consumption(start, end=None, *, aggregation="hour", address_id=None)` | kWh | `hour`, `day`, `month`, `year` | `energy_kwh`, `is_estimate` | `GET /me/addresses/{id}/consumption` |
+| `get_solar_export(start, end=None, *, aggregation="hour", address_id=None)` | kWh | `hour`, `day`, `month`, `year` | `energy_kwh`, `is_estimate` | `GET /me/addresses/{id}/solar-export` |
+| `get_consumption_costs(start, end=None, *, aggregation="hour", address_id=None)` | currency, incl. VAT | `hour`, `day`, `month`, `year` | `energy_kwh`, `total_price_per_kwh`, `fixed_fees`, `total_cost`, `is_estimate` | `GET /me/addresses/{id}/consumption-costs` |
+| `get_solar_export_revenue(start, end=None, *, aggregation="hour", address_id=None)` | currency, excl. VAT | `hour`, `day`, `month`, `year` | `energy_kwh`, `total_price_per_kwh`, `fixed_fees`, `net_revenue`, `is_estimate` | `GET /me/addresses/{id}/solar-export-revenue` |
+| `get_addresses()` | | one row per address | `id`, `label`, `formatted_address`, `region`, `time_zone`, `grid_operator_name`, `supplier_name`, and the six capability flags | `GET /me/addresses` |
+
+Plain `pytest` never touches the network and deselects the tests marked `live`. To run the live
+tests against the real API, from the repo root in PowerShell (the key goes inline; the last
+command removes it from the session):
+
+```powershell
+$env:MINSTROEM_API_KEY='<din-nøgle>'; .venv\Scripts\python.exe -m pytest tests/test_minstroem_live.py -m live -rA --tb=short -p no:cacheprovider; Remove-Item Env:MINSTROEM_API_KEY
+```
+
+It prints a `MIN STRØM LIVE SUMMARY` block (counts, time spans, a few rounded values, never the
+key or the address) followed by one line per test; paste that back. Optionally set
+`MINSTROEM_ADDRESS_ID` to pick the address (any case). The output holds no key, address id or
+address text whatever `--tb` style you use, but `-l` / `--showlocals` prints every local variable,
+the addresses included, so do not add it before pasting.
 
 ## Layout
 

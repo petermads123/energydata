@@ -24,15 +24,19 @@ by heading is updated in the same change.
 - **Flat `tests/` will collide.** One `test_<module>.py` per module in a flat `tests/` breaks
   once two subpackages have a module of the same name (e.g. two `client.py`); decide on
   `tests/<subpackage>/` with `__init__.py` files before the second source subpackage lands.
-  The first (`energidataservice`) sidestepped it with `test_energidataservice_client.py`.
+  The first (`energidataservice`) sidestepped it with `test_energidataservice_client.py`, and
+  the second (`minstroem`) with the `test_minstroem_*.py` prefix; still open.
 - **`read_json` accepts `NaN` and `Infinity`.** Stdlib leniency, pinned by a test; revisit
   if a source ever returns them and a caller needs them refused.
 
 ## `feat/energidataservice-client` round 1 (2026-10-06)
 
 - **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
-  private helper from `utils/chunking.py` for the lowest-index re-raise rule; make it public
-  (with a `structure-utils.md` row) when a second caller needs it.
+  private helper from `utils/chunking.py` for the lowest-index re-raise rule, and so does
+  `minstroem/_series.py` — the second caller is here; make it public (with a
+  `structure-utils.md` row). It also re-raises `from group_error`, so on windowed Min Strøm
+  paths `MinStroemError.__cause__` is the `ExceptionGroup`, not the httpx error (status,
+  code, reason and request id survive).
 
 ## `feat/energidataservice-markets` round 1 (2026-10-06)
 
@@ -53,3 +57,12 @@ by heading is updated in the same change.
   (Radius `DT_C_01` reaches back to 2017 and is unaffected). Likewise a DSO that changes a
   code in future goes NaN visibly until `dsos.py` is updated; refreshing the fixture's
   catalogue and the completeness test catches it.
+
+## `feat/minstroem-consumer-api` round 1 (2026-10-26)
+
+- **`attrs["address_id"]` is lower-case, `get_addresses` upper-case.** The first live run
+  (2026-10-27) showed the API issues upper-case ids and accepts the lower-case form the
+  package sends for an explicit id; joining a frame's `attrs` back onto `get_addresses()`
+  needs a case-insensitive compare.
+- **A failing `/me/addresses` floods the live output.** A bad, expired or no-Plus key gives 17
+  identical `ERROR at setup` tracebacks; the first lines carry the facts, the paste is long.

@@ -7,7 +7,7 @@ paths:
   - "tests/test_reserves.py"
   - "tests/test_pricelist.py"
   - "tests/test_dsos.py"
-  - "tests/fixtures/**"
+  - "tests/fixtures/energidataservice_*.json"
   - "tests/conftest.py"
 ---
 
@@ -117,8 +117,9 @@ Written at step 5, none touching the network: `tests/test_energidataservice_clie
 `ChargeType`; `catalogue` is every distinct (GLN, owner, type, code, note) valid since 2025
 with its `LatestValidTo` (null = open) and no prices, for the completeness test.
 `test_dsos.py` also checks `DSOS` row by row against an independent copy of the table agreed at the plan gate, and the README's DSO table against `DSOS`.
-`tests/conftest.py` carries the support: the
-`markets_records` fixture (the file's records by dataset), `MarketsService` (a mock service
+`tests/conftest.py` carries the support: `type MarketRecords = dict[str, list[dict[str, Any]]]`
+(imported by `test_pricelist.py` and `test_dsos.py`), the
+`markets_records` fixture (the file's records by dataset), `MarketsService(data: MarketRecords)` (a mock service
 that filters by the UTC window, the `filter` parameter, `sort` and `columns` as the API
 does, answers 400 for a filter field or column the records lack, notes every request
 (`requests`, read back with `datasets()`, `params(dataset=None)` and `filters(dataset=None)`),
@@ -128,3 +129,5 @@ builds a real client on itself with `client(max_span=timedelta(days=31))`; for
 `start`/`end`, `end` exclusive, as the API does), the `markets_service` fixture, the
 `pricelist_fixture` fixture (the price-list file) and the `pricelist_service` fixture (a
 `MarketsService` on its records).
+
+`tests/conftest.py` also holds the Min Strøm support (`MinStroemService`, `live_report`; see `structure-minstroem.md`), and its no-network guard lets a test marked `live` through.
