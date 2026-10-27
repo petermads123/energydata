@@ -60,8 +60,9 @@ by heading is updated in the same change.
 
 ## `feat/minstroem-consumer-api` round 1 (2026-10-26)
 
-- **Real-API behaviour unverified until the first live run.** Whether `/prices` accepts a `to`
-  up to local midnight two days ahead, the server's cap counting, address-id case, and the
-  first forecast hour; the live suite (`README.md`, Min Strøm section) is the check.
+- **`attrs["address_id"]` is lower-case, `get_addresses` upper-case.** The first live run
+  (2026-10-27) showed the API issues upper-case ids and accepts the lower-case form the
+  package sends for an explicit id; joining a frame's `attrs` back onto `get_addresses()`
+  needs a case-insensitive compare.
 - **A failing `/me/addresses` floods the live output.** A bad, expired or no-Plus key gives 17
   identical `ERROR at setup` tracebacks; the first lines carry the facts, the paste is long.
