@@ -18,7 +18,7 @@
 | 2 | Plan | `/plan` | with the user, unless the critique is clean | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | pending |
+| 5 | Test | `/test` | in `/build` | halted |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -507,10 +507,34 @@ written. Departures and decisions the plan left open:
 
 ## 5. Test log
 
-| Intent | Test names | Result |
-|---|---|---|
+Reader reports merged: `input-space` and `contract` (both saved verbatim in the session scratchpad).
 
-Edge cases considered and deliberately skipped, with reasons:
+| Intent | Test names (file) | Result |
+|---|---|---|
+| T1 | `test_metering_points_*` (`test_eloverblik_meteringpoints.py`): columns, dtypes, child tuples, `includeAll`, empty frame, no name/CPR/CVR | pass |
+| T2 | `test_details_*`, `test_snake_case_mapping` (same file): every spec scalar in order, float column, nested dropped, order, none-linked, per-point error | pass |
+| T3 | `test_the_hour_frame_*`, `test_dst_days_*`, `test_day_month_and_year_*`, `test_bounds_not_on_the_aggregation_*`, `test_an_unknown_aggregation_*`, `test_a_gap_is_nan_*`, `test_an_open_period_*` (`test_eloverblik_meterdata.py`) | pass |
+| T4 | `test_a_resolution_*`, `test_a_unit_*`, `test_a_series_for_a_point_*`, `test_a_malformed_position_*`, `test_quantity_*`, `test_30015_*`, `test_a_tolerated_code_*`, `test_a_repeated_*` (same) | pass |
+| T4b / T4c | `test_results_returned_out_of_order_*`, `test_a_requested_id_without_a_result_*`, `test_a_malformed_id_*`, `test_a_created_client_is_closed_*`, ... (`test_eloverblik_common.py`) | pass |
+| T5 | `test_the_request_dates_*`, `test_the_end_date_is_clamped_*`, `test_dates_before_the_history_horizon_*`, `test_a_period_wholly_*`, `test_the_horizon_moves_with_the_year` (meterdata, clock pinned) | pass |
+| T6 | `test_windows_follow_each_aggregations_cap_*`, `test_a_long_period_equals_*`, `test_each_window_and_batch_*`, `test_the_lowest_failing_request_*`; `gather_ordered` group in `test_chunking.py` | pass |
+| T7 | `test_charges.py`-style group in `test_eloverblik_charges.py` (rows, order, sorted positions, null position, empty prices, dtypes, dates, empty frame) | pass |
+| T8 | token group in `test_eloverblik_client.py` (argument vs env, blank, unusable unechoed, one `/token` call, concurrent 401s, second 401, rejected refresh token, redaction of echoed tokens) | pass |
+| T9 | error-mapping group in `test_eloverblik_client.py` (ProblemDetails shapes, non-JSON body, correlation id, 429/503, transport failure, 2xx non-object) | pass |
+| T10 | `test_eloverblik_spec.py` (paths, parameters, fields, mock bodies validated against schemas, exports, showcases incl. subprocess `-m`), `test_api_client.py` (headers/json), `test_chunking.py` (`gather_ordered`) | pass |
+| T11 | `test_eloverblik_spec.py`: deselected by plain `pytest`, skipped without/blank token, 17 live tests collected, offline run with `ELOVERBLIK_LIVE_MOCK=1` in a subprocess (17 passed, no token/id/name/CVR in output or report, no real transport) | pass |
+| T12 | `test_scrub_*` (spec file). The runner itself (outside the repo) is run by step 6 | pass |
+| T13 | `test_the_readme_names_*`, `test_structure_md_*`, `test_the_rules_file_*`, `test_the_utils_rules_file_*` | pass |
+
+Whole tree: `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest`: 3274 passed, 38 deselected, 2 errors. The 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones (section 4), excluded: not this round's.
+
+**Bugs the tests found, fixed in code:** (1) ids accepted non-ASCII digits (`\d` -> `[0-9]`); (2) a point listed twice by the account multiplied rows (linked ids de-duplicated); (3) a server error text echoing a token leaked into the message and `error_text` (tokens of 6+ characters replaced by `<token>`); (4) an empty/`NaT`/out-of-range `timeInterval.start` silently dropped data (now `EloverblikError`); (5) a huge `position` leaked a raw pandas overflow (now `EloverblikError`); (6) parse errors in `_collect` did not carry `metering_point_id` (now set); (7) a result carrying another requested point's series was accepted (mRID must equal the result's id); (8) tariff rows were in API order (now by position, API order for ties); (9) a null tariff `position` (nullable in the spec) raised (now `<NA>`, sorted last); (10) a charge date beyond the ns range leaked a raw pandas error (now `EloverblikError`); (11) `bytes` as ids named the first byte (now refused by name); (12) `get_meter_data` docstring overstated `MissingTokenError`. Decisions on the record: (7) and (9) read section 2's column contract and the spec; `9999-12-31` charge dates raise a clean `EloverblikError` rather than becoming NaT (the live run shows whether the API sends them).
+
+Reader cases not written, with reasons: `_unpack` string-coded `errorCode` is pinned (not tolerated) pending the live run; `1e400` charge price cannot be serialised by the mock (covered through `_number`); non-ASCII digits in a `position` text are accepted by `int()` (low value); nonexistent naive charge timestamps are covered by the ambiguity case; purity and idempotency are covered once per function.
+
+**Open (halt): per-point errors carry no `correlation_id`.** See Halted.
+
+Edge cases considered and deliberately skipped: a real transport reaching the network (the autouse guard and the live-mock subprocess run cover it); the live runner script (outside the repo, step 6 runs it).
 
 ---
 
@@ -560,3 +584,4 @@ taken back through steps 1 to 7 on the same branch.
 
 ## Halted
 
+Step 5 is complete except for one decision that is the user's. **A7 says a per-point API error carries "the correlation id" (also guide step 3), but a per-point failure arrives inside a 200 response and `ApiClient.request` returns only the parsed body, so the response headers are gone by the time `_unpack` raises: `correlation_id` is `None` for every per-point error** (the request-level 4xx/429/503 errors do carry it, tested). Either answer is a change to section 1: (a) add a third backward-compatible `utils` change (e.g. `ApiClient` exposing the response, or a `request_response` variant) so the header reaches `_unpack`, amending "touches no existing module beyond..." again; or (b) amend A7 to say per-point failures carry status, code, text and point, and the correlation id only for request-level errors. No test pins the missing id; resume with `/build` once answered (the marker stays at step 5 and the suite is otherwise green).
