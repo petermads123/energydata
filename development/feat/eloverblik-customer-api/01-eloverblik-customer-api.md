@@ -156,37 +156,292 @@ check in A3 catches it); quality codes are the CIM `A01`–`A05` strings.
 
 ### Approach
 
-One paragraph on the chosen approach, and one on what was rejected and why.
+**Chosen: mirror `minstroem`, plus two small, backward-compatible changes to `utils`.** A
+new `energydata.eloverblik` subpackage: `client.py` owns the refresh-token → access-token
+flow and error mapping on top of `ApiClient`; a private `_common.py` holds what every
+point-scoped function shares (id normalisation, the linked-point default, batching by 10,
+per-point result unpacking, the client scope); one public module per endpoint family —
+`meteringpoints.py`, `meterdata.py`, `charges.py`. `meterdata.py` keeps its period
+alignment, Copenhagen-calendar index, date windows and CIM parsing private.
+
+Eloverblik needs two things `utils` cannot give a subclass today: a **JSON request body**
+(every data endpoint is a `POST`) and a **per-request header** (the access token is fetched
+at run time and replaced on a 401, so it cannot be a constructor header). Both are already
+supported by `async_request_with_retry`; `ApiClient.request` just does not pass them. The plan
+adds keyword-only `headers` and `json` to `ApiClient.request`, defaulting to today's
+behaviour. And concurrent batches need the lowest-index-failure gather that
+`energidataservice` and `minstroem` already import privately as `_gather_ordered`;
+`DEVELOPMENT.md` already asks for it to be made public once a second caller exists — this
+is the third, so it becomes `gather_ordered` and the two existing imports are renamed.
+**This amends one sentence of section 1** ("touches no existing module beyond re-exports
+and docs"): the user decides it with the plan.
+
+Rejected: (a) **Eloverblik reaching into `ApiClient` privates** (`_on_own_loop`, the
+`httpx.AsyncClient`'s headers) to send bodies and swap the token — no change to `utils`, but
+couples the subclass to internals the base can change at will. (b) **Promoting the
+calendar helpers too** (alignment, calendar index, calendar windows, now duplicated between
+`minstroem/_series.py` and `meterdata.py`) into `utils` and migrating `minstroem` — the
+cleanest end state, but it refactors a shipped subpackage inside a feature round; noted in
+`DEVELOPMENT.md` instead. (c) **One flat module** for the whole subpackage — would be ~800
+lines and mix token handling with CIM parsing.
 
 ### Modules
 
 | Path | New or changed | Purpose |
 |---|---|---|
+| `src/energydata/utils/api_client.py` | changed | `ApiClient.request` gains keyword-only `headers` and `json`, passed to `async_request_with_retry`. |
+| `src/energydata/utils/chunking.py` | changed | `_gather_ordered` renamed `gather_ordered` (public, same behaviour). |
+| `src/energydata/utils/__init__.py` | changed | Re-export `gather_ordered`. |
+| `src/energydata/energidataservice/day_ahead.py`, `src/energydata/minstroem/_series.py` | changed | Import `gather_ordered` instead of `_gather_ordered`; nothing else. |
+| `src/energydata/eloverblik/__init__.py` | new | Re-exports the public names. |
+| `src/energydata/eloverblik/client.py` | new | `EloverblikClient`, `EloverblikError`, `MissingTokenError`, `BASE_URL`, `REFRESH_TOKEN_ENV`, `DEFAULT_POLICY`. |
+| `src/energydata/eloverblik/_common.py` | new | Private shared path of the point-scoped functions. |
+| `src/energydata/eloverblik/meteringpoints.py` | new | `get_metering_points`, `get_metering_point_details`. |
+| `src/energydata/eloverblik/meterdata.py` | new | `Aggregation`, `AGGREGATIONS`, `get_meter_data`. |
+| `src/energydata/eloverblik/charges.py` | new | `get_charges`. |
+| `tests/conftest.py` | changed | `EloverblikService` mock, its helpers and the `eloverblik_service` fixture. |
+| `tests/fixtures/eloverblik_openapi.json` | new | The published spec as fetched on 2026-11-02, for the contract test. |
+| `tests/test_eloverblik_client.py`, `test_eloverblik_meteringpoints.py`, `test_eloverblik_meterdata.py`, `test_eloverblik_charges.py`, `test_eloverblik_spec.py` | new | Offline suites. |
+| `tests/test_eloverblik_live.py` | new | Live suite, marked `live`. |
+| `tests/test_api_client.py`, `tests/test_chunking.py` | changed | Cover the two `utils` changes. |
+| `pyproject.toml` | changed | The `live` marker's text names both live APIs. |
+| `README.md`, `STRUCTURE.md`, `.claude/rules/structure-eloverblik.md` (new), `.claude/rules/structure-utils.md` | changed | Docs. |
+| `C:\Users\peter\AppData\Local\Temp\claude\C--Users-peter-OneDrive-REPOS-energydata\a22383bd-cc17-4c58-8c90-940f3d876b29\scratchpad\eloverblik_live_run.py` | new, **never committed** | The temporary runner (A8). |
 
 ### Public API
 
+`client: EloverblikClient | None = None` on every `get_*`: created and closed when absent, a
+passed one left open. `metering_point_ids: str | Sequence[str] | None = None`: a string is one
+id; ids are stripped and must be exactly 18 digits; an empty sequence, a malformed id or a
+duplicate is a `ValueError` naming it, before any request; `None` lists the linked points
+(`includeAll=false`) and uses all of them, in listing order — none linked is a `ValueError`
+saying to link one in the Eloverblik portal.
+
 | Signature | Module | Purpose | Covers |
 |---|---|---|---|
+| `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> Parsed` | `utils/api_client.py` | As today; `headers` merged over the client's headers for this request, `json` sent as the body. | A6, A3 |
+| `async gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]` | `utils/chunking.py` | The renamed `_gather_ordered`, unchanged. | A4 |
+| `BASE_URL: str` | `client.py` | `"https://api.eloverblik.dk/customerapi/api"`. | A6 |
+| `REFRESH_TOKEN_ENV: str` | `client.py` | `"ELOVERBLIK_REFRESH_TOKEN"`. | A6 |
+| `DEFAULT_POLICY: RetryPolicy` | `client.py` | `RetryPolicy(max_attempts=4, base_delay=15.0, max_delay=60.0)` — 429/503 waits grow towards the minute Eloverblik asks for. | A7 |
+| `EloverblikError(message: str, *, status: int \| None = None, error_code: int \| None = None, error_text: str \| None = None, metering_point_id: str \| None = None, correlation_id: str \| None = None)` | `client.py` | `Exception`; the keywords as attributes; `str()` is the message only. | A7 |
+| `MissingTokenError(EloverblikError)` | `client.py` | No refresh token at the first request; message names `REFRESH_TOKEN_ENV`. | A6 |
+| `EloverblikClient(refresh_token: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `client.py` | `ApiClient` on `BASE_URL` with `Accept: application/json`; `policy=None` means `DEFAULT_POLICY`. Token stripped; blank is missing. `repr` is `EloverblikClient(token=set \| missing)`. | A6 |
+| `EloverblikClient.has_refresh_token: bool` (property) | `client.py` | Whether a usable refresh token is held. | A6 |
+| `async EloverblikClient.fetch_json(method: Literal["GET", "POST"], path: str, *, params: Mapping[str, str] \| None = None, body: object = None) -> dict[str, JsonValue]` | `client.py` | One authorised request returning the JSON object. Fetches the access token on first use (under a lock, so concurrent calls share one `/token` call), reuses it, and on a 401 refreshes once and retries once. Only awaitable on the client's loop. | A6, A7 |
+| `EloverblikClient.get_json(method: Literal["GET", "POST"], path: str, *, params: Mapping[str, str] \| None = None, body: object = None) -> dict[str, JsonValue]` | `client.py` | The sync form, through `run`. | A6 |
+| `get_metering_points(*, include_unlinked: bool = False, client: EloverblikClient \| None = None) -> pd.DataFrame` | `meteringpoints.py` | `RangeIndex`; columns below. | A1 |
+| `get_metering_point_details(metering_point_ids: str \| Sequence[str] \| None = None, *, client: EloverblikClient \| None = None) -> pd.DataFrame` | `meteringpoints.py` | `RangeIndex`, one row per point in request order; every scalar field of `MeteringPointDetailsCustomerDto` in spec order as a snake_case column. | A2 |
+| `type Aggregation = Literal["quarter", "hour", "day", "month", "year"]`, `AGGREGATIONS: tuple[Aggregation, ...]` | `meterdata.py` | The supported aggregations, in that order. | A3 |
+| `get_meter_data(start: TimeLike, end: TimeLike \| None = None, *, aggregation: Aggregation = "hour", metering_point_ids: str \| Sequence[str] \| None = None, client: EloverblikClient \| None = None) -> pd.DataFrame` | `meterdata.py` | The meter-data frame (A3); `attrs["aggregation"]`. | A3, A4 |
+| `get_charges(metering_point_ids: str \| Sequence[str] \| None = None, *, client: EloverblikClient \| None = None) -> pd.DataFrame` | `charges.py` | `RangeIndex`; columns below. | A5 |
+| `main() -> None` | every module but `__init__.py` | Showcase; with no token it prints one line saying so and returns, otherwise it calls the live API (`_common.main` and `meterdata`'s alignment/windows part run offline). | — |
+
+**`get_metering_points` columns**, in order: `metering_point_id`, `type_of_mp`,
+`settlement_method`, `meter_reading_occurrence`, `balance_supplier_name`, `street_code`,
+`street_name`, `building_number`, `floor_id`, `room_id`, `city_sub_division_name`,
+`postcode`, `city_name`, `municipality_code`, `location_description`, `meter_number`,
+`consumer_start_date` (object, `None` where null); `has_relation`, `is_moved_out` (`bool`);
+`child_metering_point_ids` (a `tuple[str, ...]` per row, `()` when none). Consumer names and
+CPR/CVR fields are left out.
+
+**`get_metering_point_details` columns**: the API field name converted by two regex passes —
+`([A-Z]+)([A-Z][a-z])` → `\1_\2`, then `([a-z\d])([A-Z])` → `\1_\2` — lower-cased with `__`
+collapsed (`typeOfMP` → `type_of_mp`, `powerLimitKWDecimal` → `power_limit_kw_decimal`,
+`gridOperatorID_SchemeAgencyIdentifier` → `grid_operator_id_scheme_agency_identifier`).
+`power_limit_kw_decimal` is `float64` (NaN where null); every other column object (`None`
+where null). `contactAddresses` and `childMeteringPoints` are left out.
+
+**`get_meter_data` frame**: index `"time"`, `datetime64[ns, Europe/Copenhagen]`, the interval
+starts of `[start, end)` on the Danish calendar; columns a `MultiIndex` named
+`("metering_point_id", "field")`, points in request order, fields `energy_kwh` (`float64`)
+then `quality` (object, the raw code); a missing interval is NaN in both. Without `end`, the
+index runs to the end of the last interval any point returned; nothing returned gives the
+empty frame (zero rows, same columns, empty tz-aware `"time"` index).
+
+**`get_charges` columns**: `metering_point_id`, `kind` (`"subscription"`, `"tariff"`,
+`"fee"`), `price_id`, `name`, `description`, `owner`, `period_type` (object); `valid_from`,
+`valid_to` (`datetime64[ns, Europe/Copenhagen]`, NaT where null); `price` (`float64`);
+`quantity`, `position` (`Int64`, `<NA>` where the charge kind has none). Rows per point in
+request order: subscriptions, tariffs (each price position its own row, by position), fees.
+No charges gives an empty frame with the same columns and dtypes.
 
 ### Implementation guide
 
-Ordered. Each entry small enough to finish and check.
-
-1.
-2.
+1. **`utils` changes.** Add `headers`/`json` to `ApiClient.request`, passed through (the
+   retry wrapper merges headers over the client's). Rename `_gather_ordered` →
+   `gather_ordered`, re-export it, update the two importers. Update `structure-utils.md`
+   and delete the `DEVELOPMENT.md` entry asking for it.
+1a. **Test support first, before any Eloverblik code is written** (so the mock is built
+   from the spec, not from the parser): the spec fixture and `EloverblikService` described
+   in step 10.
+2. **`client.py`.** Constants, error types, constructor (token from argument or
+   environment, stripped; not printable ASCII without spaces → refused at the first
+   request without echo, like Min Strøm). Private `_access_token()` under an
+   `asyncio.Lock` created lazily on the client's loop: `GET /token` with
+   `Authorization: Bearer <refresh>`; `{"result": <non-empty str>}` else `EloverblikError`.
+   `fetch_json`: check token → ensure access token → `request(..., headers={"Authorization":
+   f"Bearer {access}"}, json=body, fmt="json")`; on a 401 `HTTPStatusError` it takes the
+   token lock and fetches a new access token only if the cached one is still the one that
+   was rejected (otherwise it uses the one another request already refreshed), then retries
+   once; a second 401 raises. Concurrent 401s therefore cost one `/token` call. Error mapping
+   (`_api_error`): status; `X-Correlation-ID`; from a JSON object body, `errorCode` (int)
+   and the text from `errorText`, else `detail`, else `title` (ProblemDetails). A 401 or
+   403 from `/token` says the refresh token was rejected. `RetriesExhaustedError` /
+   `HoldoffTooLongError` with a response map the same way; a transport failure stays
+   `RetriesExhaustedError`; a 2xx body that is not a JSON object is `EloverblikError` with
+   `status` 200. No message ever contains either token.
+3. **`_common.py`.** `_normalise_ids`, `_client_scope`, `_linked_ids(client)` (from
+   `/meteringpoints/meteringpoints`), `_batches(ids)` (≤ 10, order kept),
+   `_post_points(client, path, ids)` → per-point results **mapped by their `id`**, not by
+   position (batches concurrent through `gather_ordered`): an `id` that was not requested
+   raises `EloverblikError`; a requested id with no result raises naming it; a repeated id
+   keeps all its results (meter data merges their series under step 6's duplicate rule;
+   details and charges take one row per result), and `_unpack(result, path)` reading
+   `success`/`errorCode`/`errorText`/`id` and raising `EloverblikError(status=200,
+   error_code, error_text, metering_point_id, correlation_id)` for a failure the caller does
+   not tolerate. Payload-shape helpers (`_text`, `_nullable_text`, `_number`) raising
+   `EloverblikError` naming the field. `main()` offline: id normalisation and batching.
+4. **`meteringpoints.py`.** Both functions per the column tables.
+5. **`meterdata.py` — periods.** Alignment: `quarter`/`hour` through `resolve_period` with
+   that resolution; `day`/`month`/`year` additionally require local midnight / the 1st /
+   1 January (as Min Strøm does). With `end=None`, `start` (a date or a timestamp) begins
+   an open period: `resolve_period` is used only for alignment and its one-slot `end` is
+   discarded, so a lone date without `end` runs past that day. Request dates: `dateFrom` =
+   local date of `start`; `dateTo` = local date of `end`, plus one day when `end` is not
+   local midnight; `end=None` requests through tomorrow. "Today" is read only through
+   `pd.Timestamp.now(DANISH_TZ)`. `dateTo` is clamped to tomorrow's local date and
+   `dateFrom` to the **history horizon**, 1 January of (current local year − 5); a part
+   wholly after today or wholly before the horizon is not requested, and its intervals are
+   NaN (with `end`) — mirroring each other. Windows on Danish calendar dates: `quarter`/`hour`/`day` at
+   most 730 days, `month` 12 months, `year` 1 year — abutting, so nothing is requested
+   twice; each window × each batch of 10 ids is one `POST
+   /meterdata/gettimeseries/{from}/{to}/{Quarter|Hour|Day|Month|Year}`, all through
+   `gather_ordered`.
+6. **`meterdata.py` — parsing.** Per point result: `30015` → no rows for that point;
+   another failure → raise. `MyEnergyData_MarketDocument.TimeSeries[]`: `mRID` is the point
+   (a series for a point not asked for is an error); `measurement_Unit.name` must be `KWH`
+   (case-insensitive); each `Period` needs `resolution` equal to the request's
+   (`PT15M`, `PT1H`, `P1D`, `P1M`, `P1Y`) else raise naming point, asked and returned;
+   `timeInterval.start` parsed as UTC. Position `p` (1-based integer string) starts at
+   start + (p−1)·resolution — elapsed time for `PT15M`/`PT1H`, Copenhagen calendar steps
+   for `P1D`/`P1M`/`P1Y`. `out_Quantity.quantity` null or absent gives `energy_kwh` NaN with
+   the quality kept (the spec's `A02` "no quantity returned"); text present but not a
+   finite number raises. `quality` a string or absent. Points outside `[start, end)` are dropped; the same start twice for a point is
+   kept once when identical and an error when not.
+7. **`meterdata.py` — frame.** Calendar interval index (elapsed for quarter/hour via
+   `period_index`, `date_range` on local wall time for day/month/year); place each point's
+   rows; NaN elsewhere; `MultiIndex` columns built directly, because `combine_levels` /
+   `conform` are float64-only and `quality` is text; `attrs["aggregation"]`. The docstring
+   says the interval holding today may be incomplete.
+8. **`charges.py`.** Per the column table; `validFromDate`/`validToDate` parsed with
+   `pd.to_datetime(..., utc=True)` → Copenhagen (naive strings read as Copenhagen),
+   unparseable → `EloverblikError`. Tariff `position` arrives as a string and is parsed to
+   `Int64` (not an integer → `EloverblikError`); a tariff with an empty `prices[]` gives one
+   row with `price` NaN and `position` `<NA>`, so the charge is still listed.
+9. **`__init__.py`** re-exports: `BASE_URL`, `REFRESH_TOKEN_ENV`, `DEFAULT_POLICY`,
+   `EloverblikClient`, `EloverblikError`, `MissingTokenError`, `Aggregation`, `AGGREGATIONS`,
+   the four `get_*`.
+10. **Test support.** Save the spec as `tests/fixtures/eloverblik_openapi.json` — copy
+    `C:\Users\peter\AppData\Local\Temp\claude\C--Users-peter-OneDrive-REPOS-energydata\a22383bd-cc17-4c58-8c90-940f3d876b29\scratchpad\eloverblik_swagger.json`
+    (fetched 2026-11-02), or re-fetch
+    `https://api.eloverblik.dk/customerapi/swagger/customerapi-v1.0/swagger.json` if it is gone. In
+    `conftest.py`, `EloverblikService` — written from the spec, not the package: `/token`
+    (refresh token check, issues access tokens, can be told to expire one), bearer check
+    (401 ProblemDetails), `/isalive`, the four data endpoints, request-level validation as
+    documented (30000, 30001, 30002, 30003, 30004, 30008, 30014, 20013 as HTTP 400
+    ProblemDetails carrying `errorCode`), per-point results (unknown point 20008, scripted
+    per-point codes scriptable per point **and per request window**, such as 30015 or
+    30018; results returnable out of order, missing or repeated; Points with `A02` and no
+    quantity; request-level 30017 for a `dateTo` on or before the history horizon),
+    generated CIM data under the stated assumptions
+    (`dateTo` exclusive, Danish dates, `A04` quality, DST-correct), optional per-point
+    resolution override and gaps, an `X-Correlation-ID` on every response, every request
+    recorded; plus `eloverblik_service` fixture and small builders.
+11. **Live suite** `tests/test_eloverblik_live.py` (see T11) and the `pyproject` marker text.
+    One module-scoped `EloverblikClient`, passed to every function, so the run spends one
+    `/token` call. Its fixture, when `ELOVERBLIK_LIVE_MOCK=1`, calls
+    `block_real_transports` first and builds the client on an `EloverblikService` transport
+    with instant retries.
+12. **Runner** at the scratchpad path above (see T12). Not committed; the build writes it,
+    step 6 checks it exists and runs.
+13. **Docs**: README section (token from the portal: *Datadeling → Opret token*; the
+    variable; functions, columns, units, quality codes; pass one client for several calls,
+    because `/token` allows two calls a minute; the interval holding today may be
+    incomplete; the five-year horizon; the runner and the live command; never add `-l`), `STRUCTURE.md` tree and subpackage section,
+    `.claude/rules/structure-eloverblik.md`, `structure-utils.md`. `DEVELOPMENT.md`: the
+    calendar-helper duplication note.
 
 ### Test intents
 
 | # | Must prove | Covers |
 |---|---|---|
-| T1 | | |
+| T1 | `get_metering_points` columns, dtypes, child-id tuples, `include_unlinked` sending `includeAll=true`, empty account → empty frame with the same columns; no name or CPR/CVR column. | A1 |
+| T2 | `get_metering_point_details` snake_case mapping for every scalar spec field, `power_limit_kw_decimal` float, nested fields absent, request order kept, `None` → linked points, none linked → `ValueError`, a per-point error raising with its code and point. | A2 |
+| T3 | `get_meter_data` at every aggregation: index (23/25 hours and 92/100 quarters on DST days, local midnight/month/year starts), two-level columns and dtypes, `attrs`, missing interval NaN never zero, sub-day `[start, end)` trimmed from whole-day requests, `end=None` to the last returned interval and empty frame when nothing returned, misaligned bounds → `ValueError`, unknown aggregation → `ValueError`. | A3 |
+| T4 | Resolution mismatch, unit not kWh, unknown `mRID`, malformed position, non-numeric quantity text, conflicting duplicates → `EloverblikError` naming the point; identical duplicates kept once; a Point with `A02` and a null or absent quantity gives NaN energy and quality `A02` in that row, other rows unaffected; `30015` → all-NaN column while other points have data; the tolerated per-point codes (F1, decided with the user) give NaN for that point in that window only — a point whose first window fails that way while later windows have data gives NaN then values. | A3, A7 |
+| T4b | Result mapping: per-point results returned out of order are matched by `id`; a requested id missing from the response, or an `id` not requested, raises naming it; a repeated id's series are merged under the duplicate rule. | A3, A4 |
+| T4c | `_common`: a string becomes one id after stripping; an empty sequence, a 17-digit, 19-digit or non-digit id, or a duplicate is a `ValueError` naming it, before any request; a created client is closed afterwards (also on error) and a passed one left open. | A2, A3, A5 |
+| T5 | Dates, with the clock pinned through `pd.Timestamp.now`: `dateTo` clamped to tomorrow and `dateFrom` to the history horizon; a part wholly in the future or wholly before the horizon not requested (NaN with `end`); request dates exactly as in guide step 5; a lone date with no `end` runs past that day. | A3, A4 |
+| T6 | Long periods and many points: windows ≤ 730 days / 12 months / 1 year on calendar dates, abutting, no interval twice, ≤ 10 points per request, 23 points → 3 batches, result equal to a cap-free mock's single call; the lowest-index failure raised, never an `ExceptionGroup`. | A4 |
+| T7 | `get_charges` rows, kinds, positions (string → `Int64`, non-integer → `EloverblikError`), a tariff with empty `prices[]` → one row with NaN price, dtypes, timestamp parsing, ordering, empty → empty frame, malformed date → `EloverblikError`. | A5 |
+| T8 | Token: argument beats environment, stripping, blank = missing, `MissingTokenError` only at first request naming the variable, one `/token` call shared by concurrent requests, reuse across calls, one refresh on 401 then success, two concurrent requests that both get 401 causing exactly one `/token` call, a second 401 raising, a rejected refresh token, unusable token refused unechoed; neither token in any message, `repr` or `str(exc)` across every error path. | A6 |
+| T9 | Errors: ProblemDetails with and without `errorCode`, non-JSON error body, per-point failures, correlation id carried, 429/503 retried then mapped, transport failure stays `RetriesExhaustedError`, 2xx non-object body. | A7 |
+| T10 | Contract: every path, method, parameter and field the package reads exists in the spec fixture; the mock's bodies validate against it; exports; showcases run (offline ones fully, live ones print the no-token line); `ApiClient.request` passes `headers`/`json` and stays identical without them; `gather_ordered` behaves as `_gather_ordered` did. | A3, A4, A6, A9 |
+| T11 | Live suite: every test marked `live`, skipped without `ELOVERBLIK_REFRESH_TOKEN`, deselected by plain `pytest`; covers token, metering points, details, every aggregation on a recent period, an autumn-DST hourly day, `dateTo` exclusivity (a one-day `day` request yields one row; raw `timeInterval` reported), quality codes seen, `quarter` on each point (result or error recorded), charges, the shape of one deliberately invalid request's error body, a one-day `day` request for each child id from `get_metering_points` (result or error code recorded — production for net-settled solar lives there), and one 730-day `day` request on one point (success or `30014` recorded). One module-scoped client, so one `/token` call. Each test writes report lines to the file named by `ELOVERBLIK_LIVE_REPORT` — point ids as `…` plus the last four digits, never names, addresses, CPR/CVR or tokens. The suite also runs offline against `EloverblikService` when `ELOVERBLIK_LIVE_MOCK=1`; an offline test runs it so in a subprocess and asserts all pass, nothing private leaks and no real transport was reached. | A8 |
+| T12 | Runner: prompts for the token with `getpass` unless `ELOVERBLIK_REFRESH_TOKEN` is set, runs the live suite from the repo root with the token and a report file in the child's environment, scrubs the output (the refresh token, any JWT, any 18-digit number → `…` + last four), prints the pytest summary and an `ELOVERBLIK LIVE REPORT` block. The scrub function lives in `tests/test_eloverblik_live.py` and is tested offline; step 6 runs the runner once with `ELOVERBLIK_LIVE_MOCK=1` and a dummy token. | A8 |
+| T13 | Docs: README names every function and the variable; `STRUCTURE.md` and `structure-eloverblik.md` list every module and public signature. | A9 |
+
+**Coverage check:** every criterion A1–A9 has a Public API entry (A8 is the live suite and
+runner rather than a signature; A9 the docs) and at least one test intent; every Public API
+entry traces to a criterion (`main()` is the repo convention, not a feature).
 
 ### Risks
 
-What could make this harder than it looks, and what the build should do if it does —
-including whether it should halt.
+- **The real API differs from the spec or the stated assumptions** (`dateTo` inclusive,
+  error bodies without `errorCode`, `quarter` behaviour, date formats in charges). Do not
+  halt: build to the spec and the assumptions in section 1; the live run after the build
+  finds the differences, and they are fixed before the pull request.
+- **The `utils` changes break an existing caller.** Defaults must reproduce today's
+  behaviour exactly; the full existing suite must stay green — a failure there is the
+  build's to fix, not a halt.
+- **The mock mirrors the package's mistakes.** The mock is written from the spec and the
+  section-1 assumptions first (guide step 1a), before any Eloverblik code; the contract
+  test checks its bodies against the spec.
+- **The interval holding today is partial.** `dateTo` is clamped to tomorrow, so the
+  current day, month or year row is a partial sum, not NaN. Docstring and README say so; no
+  code change.
+- **Calendar arithmetic on DST days** (`P1D` positions, 23/25-hour days, quarter counts):
+  tests pin both changes of 2025 and 2026.
+- **Token lock across the loop.** The `asyncio.Lock` must be created on the client's loop
+  (lazily), never in `__init__`.
+- **The runner lives outside the repo.** If the session is lost before the live run, step 8
+  regenerates it from T12; it holds no secret.
+- If any of the above would change a criterion (e.g. the API cannot give `end=None`
+  semantics as written), halt.
 
 ### Critique
+
+`plan-critic`, 2026-11-02 — verdict **accept with the changes above**; it judged the
+`utils` amendment the right call.
+
+- **F1** Per-point `30018`/`30010`/`30016` are routine (point registered later, authorization
+  or relation period), and "any other per-point error raises" would break ordinary and
+  windowed calls. — **Open: changes a section-1 sentence, put to the user** (recommended:
+  NaN for that point in that window, like `30015`). T4 and the mock already carry it either way.
+- **F2** `A02` Points arrive with no quantity. — Applied: null/absent quantity → NaN with quality kept (step 6, T4, mock).
+- **F3** The five-year horizon was unhandled. — Applied: `dateFrom` clamped to 1 January of (year − 5), parts before it unrequested and NaN, clock read through `pd.Timestamp.now` (step 5, T5, mock 30017).
+- **F4** Results must map by `id`, not position. — Applied (step 3, T4b, mock).
+- **F5** Lone date without `end` was ambiguous. — Applied: open period, `resolve_period` only for alignment (step 5, T5).
+- **F6** Live-on-mock wiring unspecified. — Applied: fixture calls `block_real_transports` and uses the mock when `ELOVERBLIK_LIVE_MOCK=1`; the subprocess test asserts no real transport (step 11, T11).
+- **F7** `/token` limit and untested unknowns in the live run. — Applied: one module-scoped client; child-point and 730-day probes; README advice (step 11, 13, T11).
+- **F8** Concurrent 401s would each refresh. — Applied: refresh only if the cached token is the rejected one (step 2, T8).
+- **F9** Untested `ValueError` and parse branches. — Applied: T4c; tariff position parsing and empty `prices[]` decided (step 8, T7).
+- **F10** Mock order contradicted the risk. — Applied: mock first, step 1a.
+- **F11** Why `combine_levels` is not used. — Applied (step 7).
+- **F12** Partial current interval. — Applied as a risk and doc note (step 7, 13, Risks).
+
+Not clean: F1 and the `utils` amendment both change section 1, so the user decides.
 
 ---
 
