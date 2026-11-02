@@ -16,7 +16,7 @@ from energydata.utils.readers import JsonValue
 from .client import EloverblikClient, EloverblikError, _showcase_has_token
 
 BATCH_SIZE = 10
-_ID_PATTERN = re.compile(r"\d{18}")
+_ID_PATTERN = re.compile(r"[0-9]{18}")
 
 
 def _normalise_ids(metering_point_ids: str | Sequence[str]) -> list[str]:
@@ -26,6 +26,10 @@ def _normalise_ids(metering_point_ids: str | Sequence[str]) -> list[str]:
         ValueError: For an empty sequence, an id that is not 18 digits, or a
             duplicate; the message names the offender.
     """
+    if isinstance(metering_point_ids, bytes | bytearray):
+        raise ValueError(
+            f"metering_point_ids must be text, not bytes, got {metering_point_ids!r}"
+        )
     raw = (
         [metering_point_ids]
         if isinstance(metering_point_ids, str)
@@ -94,7 +98,7 @@ async def _resolve_ids(
     """
     if metering_point_ids is not None:
         return _normalise_ids(metering_point_ids)
-    linked = await _linked_ids(client)
+    linked = list(dict.fromkeys(await _linked_ids(client)))
     if not linked:
         raise ValueError(
             "no metering points are linked to this account: link one in the "

@@ -24,6 +24,7 @@ DEFAULT_POLICY: RetryPolicy = RetryPolicy(
 )
 
 _TOKEN_PATTERN = re.compile(r"[\x21-\x7e]+")
+_MIN_SECRET = 6
 
 
 class EloverblikError(Exception):
@@ -237,6 +238,10 @@ class EloverblikClient(ApiClient):
             self._access = token.strip()
             return self._access
 
+    def _secrets(self) -> tuple[str, ...]:
+        """The tokens held, to be removed from anything the server says back."""
+        return tuple(t for t in (self._refresh, self._access or "") if t)
+
     async def _json(
         self,
         method: str,
@@ -251,11 +256,11 @@ class EloverblikClient(ApiClient):
                 method, path, params=params, fmt="json", headers=headers, json=body
             )
         except httpx.HTTPStatusError as exc:
-            raise _api_error(path, exc.response) from exc
+            raise _api_error(path, exc.response, self._secrets()) from exc
         except (RetriesExhaustedError, HoldoffTooLongError) as exc:
             if exc.response is None:
                 raise
-            raise _api_error(path, exc.response) from exc
+            raise _api_error(path, exc.response, self._secrets()) from exc
         except ParseError as exc:
             raise EloverblikError(
                 f"Eloverblik API: the response to {path} is not valid JSON: "
@@ -276,8 +281,21 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _api_error(path: str, response: httpx.Response) -> EloverblikError:
-    """Build the error for an error response, reading Eloverblik's error bodies."""
+def _redact(text: str, secrets: tuple[str, ...]) -> str:
+    """`text` with every token (of at least six characters) replaced by `<token>`."""
+    for secret in secrets:
+        if len(secret) >= _MIN_SECRET:
+            text = text.replace(secret, "<token>")
+    return text
+
+
+def _api_error(
+    path: str, response: httpx.Response, secrets: tuple[str, ...] = ()
+) -> EloverblikError:
+    """Build the error for an error response, reading Eloverblik's error bodies.
+
+    A server text that echoes one of `secrets` has it replaced by `<token>`.
+    """
     error_code: int | None = None
     error_text: str | None = None
     try:
@@ -291,7 +309,7 @@ def _api_error(path: str, response: httpx.Response) -> EloverblikError:
         for key in ("errorText", "detail", "title"):
             text = body.get(key)
             if isinstance(text, str) and text:
-                error_text = text
+                error_text = _redact(text, secrets)
                 break
     correlation_id = response.headers.get("X-Correlation-ID")
     status = response.status_code

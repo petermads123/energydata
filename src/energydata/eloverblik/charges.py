@@ -31,7 +31,7 @@ def _stamp(value: str | None, label: str) -> pd.Timestamp | None:
         stamp = pd.Timestamp(value)
         if stamp.tzinfo is None:
             stamp = stamp.tz_localize(DANISH_TZ)
-        return stamp.tz_convert(DANISH_TZ)
+        return stamp.tz_convert(DANISH_TZ).as_unit("ns")
     except (ValueError, OverflowError) as exc:
         raise EloverblikError(f"{label} is not a usable date: {value!r}") from exc
 
@@ -92,20 +92,24 @@ def _rows(point_id: str, result: dict[str, JsonValue]) -> list[dict[str, object]
                     rows.append(
                         common | {"price": math.nan, "quantity": None, "position": None}
                     )
+                steps: list[dict[str, object]] = []
                 for step, entry in enumerate(prices or []):
                     note = f"{what} price {step}"
                     if not isinstance(entry, dict):
                         raise EloverblikError(f"{note} is not a JSON object")
-                    rows.append(
-                        common
-                        | {
+                    raw = entry.get("position")
+                    steps.append(
+                        {
                             "price": _number(entry.get("price"), "price", note),
                             "quantity": None,
-                            "position": _integer(
-                                entry.get("position"), "position", note
+                            "position": (
+                                None if raw is None else _integer(raw, "position", note)
                             ),
                         }
                     )
+                # By position, a price without one last; the API order breaks ties.
+                steps.sort(key=lambda r: (r["position"] is None, r["position"] or 0))
+                rows.extend(common | step_row for step_row in steps)
             else:
                 quantity = charge.get("quantity")
                 rows.append(

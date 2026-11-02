@@ -182,9 +182,14 @@ def _instant(value: object, what: str) -> pd.Timestamp:
         stamp = pd.Timestamp(value)
     except (ValueError, OverflowError) as exc:
         raise EloverblikError(f"{what} is not a usable timestamp: {value!r}") from exc
+    if pd.isna(stamp):
+        raise EloverblikError(f"{what} is not a usable timestamp: {value!r}")
     if stamp.tzinfo is None:
         stamp = stamp.tz_localize("UTC")
-    return stamp.tz_convert("UTC").as_unit("ns")
+    try:
+        return stamp.tz_convert("UTC").as_unit("ns")
+    except (ValueError, OverflowError) as exc:
+        raise EloverblikError(f"{what} is out of range: {value!r}") from exc
 
 
 def _quantity(value: JsonValue, what: str) -> float:
@@ -247,60 +252,79 @@ def _collect(
                 "requested",
                 metering_point_id=point_id,
             )
-        label = f"{path}: point {point_id}"
-        unit = series.get("measurement_Unit.name")
-        if not isinstance(unit, str) or unit.strip().upper() != "KWH":
+        if point_id != result.get("id"):
             raise EloverblikError(
-                f"{label} reports unit {unit!r}, expected KWH",
+                f"{path}: the result for metering point {result.get('id')!r} holds "
+                f"a series for metering point {point_id}",
                 metering_point_id=point_id,
             )
-        periods = series.get("Period")
-        if periods is None:
-            continue
-        if not isinstance(periods, list):
-            raise EloverblikError(f"{label}: 'Period' is not a list")
-        rows = into.setdefault(point_id, {})
-        for period in periods:
-            if not isinstance(period, dict):
-                raise EloverblikError(f"{label}: a period is not a JSON object")
-            got = period.get("resolution")
-            if got != expected:
+        try:
+            label = f"{path}: point {point_id}"
+            unit = series.get("measurement_Unit.name")
+            if not isinstance(unit, str) or unit.strip().upper() != "KWH":
                 raise EloverblikError(
-                    f"{label} returned resolution {got!r} for aggregation "
-                    f"{aggregation!r}, expected {expected!r}",
+                    f"{label} reports unit {unit!r}, expected KWH",
                     metering_point_id=point_id,
                 )
-            interval = period.get("timeInterval")
-            if not isinstance(interval, dict):
-                raise EloverblikError(f"{label}: a period has no 'timeInterval'")
-            begin = _instant(interval.get("start"), f"{label}: timeInterval 'start'")
-            points = period.get("Point")
-            if points is None:
+            periods = series.get("Period")
+            if periods is None:
                 continue
-            if not isinstance(points, list):
-                raise EloverblikError(f"{label}: 'Point' is not a list")
-            for point in points:
-                if not isinstance(point, dict):
-                    raise EloverblikError(f"{label}: a point is not a JSON object")
-                position = _position(point.get("position"), label)
-                quality = point.get("out_Quantity.quality")
-                if quality is not None and not isinstance(quality, str):
-                    raise EloverblikError(f"{label}: quality is not text")
-                value = (
-                    _quantity(
-                        point.get("out_Quantity.quantity"), f"{label} point {position}"
-                    ),
-                    quality,
-                )
-                start = _interval_start(begin, aggregation, position - 1)
-                known = rows.get(start)
-                if known is not None and not _same(known, value):
+            if not isinstance(periods, list):
+                raise EloverblikError(f"{label}: 'Period' is not a list")
+            rows = into.setdefault(point_id, {})
+            for period in periods:
+                if not isinstance(period, dict):
+                    raise EloverblikError(f"{label}: a period is not a JSON object")
+                got = period.get("resolution")
+                if got != expected:
                     raise EloverblikError(
-                        f"{label} has two different values for the interval "
-                        f"starting {start.isoformat()}",
+                        f"{label} returned resolution {got!r} for aggregation "
+                        f"{aggregation!r}, expected {expected!r}",
                         metering_point_id=point_id,
                     )
-                rows[start] = value
+                interval = period.get("timeInterval")
+                if not isinstance(interval, dict):
+                    raise EloverblikError(f"{label}: a period has no 'timeInterval'")
+                begin = _instant(
+                    interval.get("start"), f"{label}: timeInterval 'start'"
+                )
+                points = period.get("Point")
+                if points is None:
+                    continue
+                if not isinstance(points, list):
+                    raise EloverblikError(f"{label}: 'Point' is not a list")
+                for point in points:
+                    if not isinstance(point, dict):
+                        raise EloverblikError(f"{label}: a point is not a JSON object")
+                    position = _position(point.get("position"), label)
+                    quality = point.get("out_Quantity.quality")
+                    if quality is not None and not isinstance(quality, str):
+                        raise EloverblikError(f"{label}: quality is not text")
+                    value = (
+                        _quantity(
+                            point.get("out_Quantity.quantity"),
+                            f"{label} point {position}",
+                        ),
+                        quality,
+                    )
+                    try:
+                        start = _interval_start(begin, aggregation, position - 1)
+                    except (ValueError, OverflowError) as exc:
+                        raise EloverblikError(
+                            f"{label}: position {position} is out of range"
+                        ) from exc
+                    known = rows.get(start)
+                    if known is not None and not _same(known, value):
+                        raise EloverblikError(
+                            f"{label} has two different values for the interval "
+                            f"starting {start.isoformat()}",
+                            metering_point_id=point_id,
+                        )
+                    rows[start] = value
+        except EloverblikError as exc:
+            if exc.metering_point_id is None:
+                exc.metering_point_id = point_id
+            raise
 
 
 def _position(value: JsonValue, label: str) -> int:
@@ -424,7 +448,7 @@ def get_meter_data(
             aggregation, `start >= end`, an id is malformed or repeated, the id
             sequence is empty, or `metering_point_ids` is `None` and no point is
             linked.
-        MissingTokenError: If there is no refresh token.
+        MissingTokenError: If there is no refresh token and a request is made.
         EloverblikError: If the API refuses a request, reports another failure
             for a point, returns a resolution or unit other than the one asked,
             or returns an unexpected payload.
