@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -20,7 +20,7 @@
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | done |
-| 7 | Ship | `/ship` | in `/build` | pending |
+| 7 | Ship | `/ship` | in `/build` | done |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
 | 10 | Review | `/watch-pr` | on the pull request | pending |
@@ -577,8 +577,10 @@ Drift found, and what was done about it: none in the code. Structure-auditor (4 
 
 | Field | Value |
 |---|---|
-| Commits | |
-| Pushed to | |
+| Commits | Every commit of the round, oldest first: `8e880a3` Concept; `da3567f` Plan; `b3f5032` Plan accepted; step 3: `078080f` utils headers/json and public `gather_ordered`, `189faef` spec fixture and `EloverblikService`, `658904f` eloverblik package, `ccb5444` live suite, `bf7d5db` Implement Eloverblik Customer API; step 4: `333e1c1` verify, marker-text test, structure docs; step 5: `a3c0929` findings fixed and client suite, `76142ce` metering points and details suite, `f70380f` common path suite, `d6f15fc` charges suite, `ff876f2` meter data suite, `470e9dc` utils changes covered, `0d17fe9` spec/live-wiring suite, `e07ea2b` test log and halt, `0e05ff2` halt answered, `fe687d5` `request_response` and per-point correlation ids; step 6: `58e0b74` concept check table and auditor doc fixes; step 7: the `Ship:` commit that closes the round. Every step committed; none missing. |
+| Pushed to | `origin/feat/eloverblik-customer-api` |
+| Whole tree at ship | `ruff check .` clean; `ruff format --check .` 107 files already formatted; `mypy` no issues in 70 source files; `pytest` 3285 passed, 38 deselected, 2 errors (the pre-existing Windows-only `tests/test_readers.py` ones, also on `origin/main`, not this round's). `origin/main` had not moved (0 commits behind). |
+| Diff review | 31 files, +10114/-31. No scratch file, runner (`eloverblik_live_run.py`), token, real metering-point id, name or address in the diff; the only 18-digit ids are synthetic `5713131…` test ids and the only JWT-shaped string is a fake in a redaction test. The runner is in the session scratchpad only. A8's real-token run is still to do after the build. |
 
 ---
 
