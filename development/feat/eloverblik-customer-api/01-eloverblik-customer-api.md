@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -16,7 +16,7 @@
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user, unless the critique is clean | done |
-| 3 | Implement | `/implement` | in `/build` | pending |
+| 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
@@ -455,6 +455,35 @@ Accepted: by the user, 2026-11-02
 ---
 
 ## 3. Implementation notes
+
+Built in the guide's order: the `utils` changes, then the spec fixture and `EloverblikService`
+(step 1a, before any Eloverblik code), the client, `_common`, the three function modules, the
+live suite, the runner, the docs. The Public API table is unchanged: every signature exists as
+written. Departures and decisions the plan left open:
+
+- **Lenient absent fields.** In the point listing and in the details, a text field that is
+  absent counts as null (only the point id and the two booleans of the listing are required);
+  the spec marks them all nullable and the real API may omit nulls. A field present with the
+  wrong type is an `EloverblikError`.
+- **Charges.** A subscription or fee needs `price` (number) and `quantity` (integer, number or
+  integer text); both validity dates are optional; a naive date text is read as Danish time.
+- **Windows.** A month window is the first of the month plus 12 months, a year window one
+  calendar year, a day/hour/quarter window 730 days; the date after `end` is added when `end`
+  is not local midnight.
+- **`EloverblikClient.fetch_json`** retries once on any `EloverblikError` with status 401 from
+  the data endpoint; a 401 or 403 from `/token` is mapped with a "refresh token was rejected"
+  message and is never retried.
+- **Mock.** `EloverblikService` reports an id that is not 18 digits as `20003` and a well-formed
+  id that is not linked as `20008` (also in `getdetails` and `getcharges`); the child-point test
+  of the live suite therefore records `20008` offline.
+- **Existing suite.** Plain `pytest` after the `utils` change: 2043 passed, 2 errors, both in
+  `tests/test_readers.py` (a `[[[[...` parametrize id); `readers.py` and its tests are untouched
+  by this round and the errors reproduce on their own, so they pre-date it.
+- **Runner.** Written at the scratchpad path of guide step 12 (outside the tree, not committed);
+  run once offline with `ELOVERBLIK_LIVE_MOCK=1` and a dummy token: it prints the pytest tail and
+  the `ELOVERBLIK LIVE REPORT` block, all ids shortened.
+- **`DEVELOPMENT.md`.** The `_gather_ordered` entry is deleted (resolved); the `__cause__`
+  remark in it is kept as a shorter entry; the calendar-helper duplication note is added.
 
 ---
 

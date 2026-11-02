@@ -25,7 +25,7 @@ by heading is updated in the same change.
   once two subpackages have a module of the same name (e.g. two `client.py`); decide on
   `tests/<subpackage>/` with `__init__.py` files before the second source subpackage lands.
   The first (`energidataservice`) sidestepped it with `test_energidataservice_client.py`, and
-  the second (`minstroem`) with the `test_minstroem_*.py` prefix; still open.
+  the second (`minstroem`) with the `test_minstroem_*.py` prefix, and the third (`eloverblik`) with `test_eloverblik_*.py`; still open.
 - **`read_json` accepts `NaN` and `Infinity`.** Stdlib leniency, pinned by a test; revisit
   if a source ever returns them and a caller needs them refused.
 
@@ -71,3 +71,7 @@ by heading is updated in the same change.
   codes as CIM `A01`–`A05`, and `Quarter` on an hourly-metered point unknown (the resolution
   check refuses a mismatch either way). The live run at the end of the round checks each;
   delete this entry once it has.
+- **Calendar helpers are duplicated across `minstroem/_series.py` and `eloverblik/meterdata.py`.**
+  Period alignment, the Copenhagen-calendar interval index and the calendar window split exist
+  twice (private, near-identical). Promote them to `utils` and migrate `minstroem` in a
+  refactor round once a third caller or a defect makes it worth touching a shipped subpackage.
