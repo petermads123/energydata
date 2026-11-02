@@ -66,3 +66,11 @@ by heading is updated in the same change.
   needs a case-insensitive compare.
 - **A failing `/me/addresses` floods the live output.** A bad, expired or no-Plus key gives 17
   identical `ERROR at setup` tracebacks; the first lines carry the facts, the paste is long.
+
+## `feat/eloverblik-customer-api` round 1 (2026-11-02)
+
+- **Eloverblik date semantics are assumed, not observed.** Built from the published spec
+  without a token: `dateTo` taken as exclusive, both dates as Danish calendar days, quality
+  codes as CIM `A01`–`A05`, and `Quarter` on an hourly-metered point unknown (the resolution
+  check refuses a mismatch either way). The live run at the end of the round checks each;
+  delete this entry once it has.
