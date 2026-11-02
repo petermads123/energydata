@@ -113,10 +113,12 @@ request window; any other per-point error raises. (Amended at step 2 with the us
 Calls `utils`: `ApiClient` (loop, concurrency, retry — 429 and 503 retried with backoff),
 `resolve_period`, the period index and frame helpers in `utils/frames.py` (including the
 two-level column combining), and the chunked fetch helpers where they fit. Nothing calls
-it. It changes `utils` in two backward-compatible ways — `ApiClient.request` gains optional
-`headers` and `json`, and `_gather_ordered` becomes public `gather_ordered` (its two importers
-renamed) — and otherwise touches no existing module beyond re-exports and docs. (Amended at
-step 2 with the user, 2026-11-02.) The `DEVELOPMENT.md` note
+it. It changes `utils` in three backward-compatible ways — `ApiClient.request` gains optional
+`headers` and `json`, `_gather_ordered` becomes public `gather_ordered` (its two importers
+renamed), and `ApiClient` gains `request_response`, which returns the raw response so a
+per-point error inside a 200 can carry its `X-Correlation-ID` — and otherwise touches no
+existing module beyond re-exports and docs. (Amended at step 2 with the user, 2026-11-02;
+the third change added at the step-5 halt, 2026-11-02.) The `DEVELOPMENT.md` note
 on `date_windows` being elapsed-time applies directly: windows must be split on Copenhagen
 calendar dates, not elapsed UTC spans. The flat `tests/` collision is sidestepped as before,
 with a `test_eloverblik_*.py` prefix.
@@ -195,7 +197,7 @@ lines and mix token handling with CIM parsing.
 
 | Path | New or changed | Purpose |
 |---|---|---|
-| `src/energydata/utils/api_client.py` | changed | `ApiClient.request` gains keyword-only `headers` and `json`, passed to `async_request_with_retry`. |
+| `src/energydata/utils/api_client.py` | changed | `ApiClient.request` gains keyword-only `headers` and `json`, passed to `async_request_with_retry`; new `ApiClient.request_response` returning the raw response (added at the step-5 halt). |
 | `src/energydata/utils/chunking.py` | changed | `_gather_ordered` renamed `gather_ordered` (public, same behaviour). |
 | `src/energydata/utils/__init__.py` | changed | Re-export `gather_ordered`. |
 | `src/energydata/energidataservice/day_ahead.py`, `src/energydata/minstroem/_series.py` | changed | Import `gather_ordered` instead of `_gather_ordered`; nothing else. |
@@ -226,6 +228,7 @@ saying to link one in the Eloverblik portal.
 | Signature | Module | Purpose | Covers |
 |---|---|---|---|
 | `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> Parsed` | `utils/api_client.py` | As today; `headers` merged over the client's headers for this request, `json` sent as the body. | A6, A3 |
+| `async ApiClient.request_response(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> httpx.Response` | `utils/api_client.py` | Added at the step-5 halt. Sends exactly as `request` does (semaphore, retry, the same exceptions except `ParseError`) and returns the response unparsed; `request` becomes `read_response(await self.request_response(...), fmt)`. `EloverblikClient` uses it so `fetch_json` can hand the response's `X-Correlation-ID` to `_post_points`/`_unpack`, and every per-point `EloverblikError` carries it. | A7 |
 | `async gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]` | `utils/chunking.py` | The renamed `_gather_ordered`, unchanged. | A4 |
 | `BASE_URL: str` | `client.py` | `"https://api.eloverblik.dk/customerapi/api"`. | A6 |
 | `REFRESH_TOKEN_ENV: str` | `client.py` | `"ELOVERBLIK_REFRESH_TOKEN"`. | A6 |
@@ -585,3 +588,12 @@ taken back through steps 1 to 7 on the same branch.
 ## Halted
 
 Step 5 is complete except for one decision that is the user's. **A7 says a per-point API error carries "the correlation id" (also guide step 3), but a per-point failure arrives inside a 200 response and `ApiClient.request` returns only the parsed body, so the response headers are gone by the time `_unpack` raises: `correlation_id` is `None` for every per-point error** (the request-level 4xx/429/503 errors do carry it, tested). Either answer is a change to section 1: (a) add a third backward-compatible `utils` change (e.g. `ApiClient` exposing the response, or a `request_response` variant) so the header reaches `_unpack`, amending "touches no existing module beyond..." again; or (b) amend A7 to say per-point failures carry status, code, text and point, and the correlation id only for request-level errors. No test pins the missing id; resume with `/build` once answered (the marker stays at step 5 and the suite is otherwise green).
+
+**Answered by the user, 2026-11-02: (a).** Per-point errors carry the correlation id. A third
+backward-compatible `utils` change is added: `ApiClient.request_response`, returning the raw
+response, with `request` built on it (section 1 "How it connects" and the section 2 Modules
+and Public API tables amended). `EloverblikClient` uses it so the `X-Correlation-ID` of the
+200 response reaches every per-point `EloverblikError`. The build resumes at step 5: implement
+it, test it (A7: a per-point error's `correlation_id` equals the response header, for meter
+data, details and charges), update `structure-utils.md`, `structure-eloverblik.md` and
+`STRUCTURE.md`.
