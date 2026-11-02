@@ -662,7 +662,11 @@ def test_gather_ordered_returns_results_in_call_order_not_finish_order() -> None
 
 
 def test_gather_ordered_keeps_falsy_results() -> None:
-    calls = [lambda: _after(0, 0), lambda: _after(0, None), lambda: _after(0, [])]
+    calls: list[Callable[[], Awaitable[object]]] = [
+        lambda: _after(0, 0),
+        lambda: _after(0, None),
+        lambda: _after(0, []),
+    ]
 
     assert asyncio.run(gather_ordered(calls)) == [0, None, []]
 

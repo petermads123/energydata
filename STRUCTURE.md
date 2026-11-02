@@ -130,8 +130,12 @@ the public names), `src/energydata/eloverblik/client.py` (`EloverblikClient`, `E
 Tests: `tests/conftest.py` (also the `EloverblikService` mock, its builders and the
 `eloverblik_service` fixture), `tests/fixtures/eloverblik_openapi.json` (the published OpenAPI
 spec), `tests/test_eloverblik_live.py` (marked `live`, skipped without a token, deselected by
-plain `pytest`, runnable offline with `ELOVERBLIK_LIVE_MOCK=1`); the offline suites
-`tests/test_eloverblik_*.py` follow at step 5.
+plain `pytest`, runnable offline with `ELOVERBLIK_LIVE_MOCK=1`), and the offline suites
+`tests/test_eloverblik_client.py`, `tests/test_eloverblik_common.py`,
+`tests/test_eloverblik_meteringpoints.py`, `tests/test_eloverblik_meterdata.py`,
+`tests/test_eloverblik_charges.py` and `tests/test_eloverblik_spec.py`. The `ApiClient.request`
+headers/json and `gather_ordered` changes are covered in `tests/test_api_client.py` and
+`tests/test_chunking.py`.
 
 ## Package: `src/energydata/`
 

@@ -261,7 +261,7 @@ def test_a_subscription_with_a_bad_quantity_or_price_raises(
     change: dict[str, object],
 ) -> None:
     with pytest.raises(EloverblikError):
-        _one([eloverblik_charge(**change)])
+        _one([eloverblik_charge("SUB1", **change)])
 
 
 @pytest.mark.parametrize("missing", ["quantity", "price"])

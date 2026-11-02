@@ -99,5 +99,17 @@ the `eloverblik_service` fixture.
 number to `...` plus its last four digits. With `ELOVERBLIK_LIVE_MOCK=1` the same tests run
 offline against `EloverblikService` with every real transport refused. The offline suites
 (`test_eloverblik_client.py`, `test_eloverblik_meteringpoints.py`,
-`test_eloverblik_meterdata.py`, `test_eloverblik_charges.py`, `test_eloverblik_spec.py`) are
-written at step 5.
+`test_eloverblik_meterdata.py`, `test_eloverblik_charges.py`, `test_eloverblik_spec.py`) and
+`test_eloverblik_common.py` (the shared path, driven through the public functions) all run on
+`httpx.MockTransport` with the clock pinned through `pd.Timestamp.now` where dates matter.
+`client` covers tokens, the 401 refresh, error mapping, redaction of a token a server echoes and
+retries; `meteringpoints`/`charges`/`meterdata` each endpoint's columns, dtypes, nulls and
+payload errors (meter data also periods, the history horizon, windows and batches, DST days);
+`spec` the package against the OpenAPI fixture, the mock's bodies against its schemas, the live
+suite's offline subprocess run (nothing private in its output), `scrub` and the docs. Rules the
+tests pin: ids are ASCII digits only; a point listed twice is used once; an error text that
+echoes a token (of six characters or more) has it replaced by `<token>`; a series must carry
+the id of the result it is in; a missing or unparseable `timeInterval.start`, or a position
+beyond what pandas can place, is an `EloverblikError` carrying the point; tariff rows are in
+position order (a null position last, `<NA>`); a charge date pandas cannot hold is an
+`EloverblikError`.
