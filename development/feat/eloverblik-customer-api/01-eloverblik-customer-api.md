@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -19,7 +19,7 @@
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | done |
-| 6 | Concept check | `/concept-check` | in `/build` | pending |
+| 6 | Concept check | `/concept-check` | in `/build` | done |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
 | 9 | Pull request | `/create-pr` | with the user | pending |
@@ -550,9 +550,21 @@ Edge cases considered and deliberately skipped: a real transport reaching the ne
 
 | # | Criterion | Met | Evidence |
 |---|---|---|---|
-| A1 | | | |
+| A1 | Metering points | yes | `meteringpoints.py` `get_metering_points` (columns per section 2); `test_metering_points_*` (columns, dtypes, child tuples, `includeAll=true`, empty frame); offline live run: 2 points with types, settlement, children |
+| A2 | Details | yes | `get_metering_point_details`; `test_details_*`, `test_snake_case_mapping` (every spec scalar, nested dropped, `None` -> linked, none linked -> `ValueError`); offline live run: 2 rows, 57 columns |
+| A3 | Meter data | yes | `meterdata.py`; tests T3/T4 (23/25-hour and 92/100-quarter days, NaN not zero, `end=None`, misaligned `ValueError`, resolution/unit mismatch `EloverblikError`); offline live run: every aggregation, 25 hourly rows on 2026-10-25, 0 missing |
+| A4 | Long periods, many points | yes | `_MAX_DAYS = 730` windows on Danish dates (`meterdata.py:49`); `test_windows_follow_each_aggregations_cap_*`, `test_a_long_period_equals_*`, `test_each_window_and_batch_*`; `meterdata` showcase windows abut (`2024-01-01` / `2025-12-31` / `2026-01-01`); batches `[10, 10, 3]` in the `_common` showcase |
+| A5 | Charges | yes | `charges.py`; `test_eloverblik_charges.py` (kinds, positions, empty `prices[]`, dtypes, dates, empty frame); offline live run: 52 rows over tariff/subscription/fee |
+| A6 | Token | yes | `client.py`; `test_a_401_refreshes_once_and_retries_once`, `test_concurrent_401s_cost_one_token_call`, `test_a_second_401_raises_after_exactly_one_refresh`, redaction tests (`..._echoing_the_refresh_token_is_redacted`, access-token twin), `repr` is `EloverblikClient(token=set|missing)` (`client.py:133`); showcases run with no token and print the one-line notice |
+| A7 | Errors | yes | `EloverblikError` carries status, code, text, point, correlation id (`client.py:30-67`); `test_a_per_point_*_error_*` x3 and `test_the_correlation_id_is_that_of_the_batch_that_failed` (halt (a) answered); 429/503 tests in `test_eloverblik_client.py`; offline live run: invalid request `status=400 code=30001 correlation_id_present=True` |
+| A8 | Tests and live run | partially | Evidenced: plain `pytest` offline, no token: 3285 passed, 38 deselected, 2 errors (the known Windows-only `test_readers.py` ones, also on `main`); live suite is 17 tests marked `live`, skipped without a token, deselected by default (`test_eloverblik_spec.py`). Runner run once offline (`ELOVERBLIK_LIVE_MOCK=1`, dummy token): `17 passed in 0.92s` and a readable `ELOVERBLIK LIVE REPORT` with ids shown as `...0001`, no names, addresses or CPR/CVR. The runner is in the session scratchpad, not in the tree or in git history (`git ls-files` and `git log --all -- '*eloverblik_live_run*'` empty). **Not evidenced:** the real-token run; no token or network here, planned for after the build |
+| A9 | Docs | yes | README section "Eloverblik" (token setup, variable, live command); `STRUCTURE.md`; `.claude/rules/structure-eloverblik.md`; `structure-utils.md`; `test_the_readme_names_*`, `test_structure_md_*`, `test_the_rules_file_*`; structure-auditor's 4 findings (+1 optional) applied below |
 
-Drift found, and what was done about it:
+Out of scope: nothing built (no `relation/add`, `getchargelinkswithcharges`, exports, `Actual`, token cache; grep of the subpackage for them is empty). Connections: only `utils` is used; nothing calls `eloverblik`. Surface: matches section 1 (client, errors, constants, four `get_*`, `Aggregation`/`AGGREGATIONS`); `BATCH_SIZE` is in a private module and documented.
+
+Whole tree at this step: `ruff check .`, `ruff format --check .`, `mypy` (70 files) clean; `pytest` 3285 passed, 38 deselected, 2 known errors.
+
+Drift found, and what was done about it: none in the code. Structure-auditor (4 findings + 1 optional), all accurate, applied in the rules files only (`STRUCTURE.md` needed none): (1) `structure-eloverblik.md` intro no longer names the private `_fetch`; (2) `structure-utils.md` `test_chunking.py` bullet now lists the `gather_ordered` tests; (3) its `test_api_client.py` bullet lists the `headers`/`json` tests; (4) `structure-eloverblik.md` conftest builders show their defaults; optional: `structure-energidataservice.md` conftest sentence names `EloverblikService`.
 
 ### Earlier rounds still hold
 

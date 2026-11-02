@@ -23,9 +23,9 @@ malformed id or a duplicate is a `ValueError` naming it, before any request; `No
 linked points (`includeAll=false`) and uses all of them in listing order, none linked being a
 `ValueError`. Requests are batched at most 10 points each, concurrently through
 `gather_ordered`, and per-point results are matched to the requested ids by their `id`. Each result remembers the
-`X-Correlation-ID` of the response it arrived in (the client's private `_fetch` returns it,
-through `ApiClient.request_response`), so every per-point `EloverblikError` carries it: the
-failure `_unpack` raises, and any payload error raised while a function parses that point's result.
+`X-Correlation-ID` of the response it arrived in (read through `ApiClient.request_response`),
+so every per-point `EloverblikError` carries it: a per-point failure reported in the response,
+and any payload error raised while a function parses that point's result.
 
 ## `src/energydata/eloverblik/client.py`
 
@@ -81,9 +81,9 @@ and `30016` give NaN for that window, any other raises. The clock is read only t
 
 `tests/fixtures/eloverblik_openapi.json` is the OpenAPI 3.0.4 spec as published on 2026-11-02.
 `tests/conftest.py` carries the support: `ELOVERBLIK_REFRESH_TOKEN`, `ELOVERBLIK_POINT_A`,
-`ELOVERBLIK_POINT_B`; builders `eloverblik_point_id(number)`, `eloverblik_point(point_id, **fields)`,
-`eloverblik_details(point_id, **fields)`, `eloverblik_charge(price_id, **fields)`,
-`eloverblik_tariff(price_id, prices=24, **fields)`; and `EloverblikService(points=None, *,
+`ELOVERBLIK_POINT_B`; builders `eloverblik_point_id(number)`, `eloverblik_point(point_id=ELOVERBLIK_POINT_A, **fields)`,
+`eloverblik_details(point_id=ELOVERBLIK_POINT_A, **fields)`, `eloverblik_charge(price_id="SUB1", **fields)`,
+`eloverblik_tariff(price_id="TAR1", prices=24, **fields)`; and `EloverblikService(points=None, *,
 refresh_token=...)`, a mock written from the spec: `/token`, bearer check, `/isalive`, the
 listing, `getdetails`, `getcharges` and `gettimeseries` with request-level validation (HTTP
 400 ProblemDetails with `errorCode`: 20013, 30000-30004, 30008, 30014, 30017), generated CIM data

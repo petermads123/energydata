@@ -129,12 +129,14 @@ One suite per module, written at step 5. No test touches the network.
   `fetch_chunked` and `async_fetch_chunked` run through the same parametrised
   cases (order, stopping at the first exception, no call when validation fails),
   plus a check that async windows never overlap, and `gather_chunked` (order,
-  concurrency cap, lowest-index failure, validation).
+  concurrency cap, lowest-index failure, validation), and `gather_ordered` (empty input,
+  call order not finish order, falsy results kept, lowest-index failure re-raised as the
+  same object, the rest cancelled).
 - `tests/test_api_client.py` — constructor validation, no thread before first use, URL
   joining, parsing, retry of 503 and not of 400, the concurrency cap (also across
   threads), `run` inside a running loop and from other threads, reuse, `run`/`close` from
   the loop thread and `request` on a foreign loop raising, idempotent `close`, the context
-  manager, cancellation on close and on interrupt, the `run`/`close` race, and `request_response` (unparsed body and headers, same sending as `request`, retry, status error, semaphore cap, foreign loop).
+  manager, cancellation on close and on interrupt, the `run`/`close` race, `request`'s per-request `headers` (merged over the client's, overriding case-insensitively, resent on a retry) and `json` (sent even when falsy; omitting both changes nothing), and `request_response` (unparsed body and headers, same sending as `request`, retry, status error, semaphore cap, foreign loop).
 - `tests/test_periods.py` — `resolve_period`: whole local day (92/96/100), lone
   timestamp, date versus timestamp strings, naive as Danish time, exclusive end, aware
   input converted, the repeated hour, every `ValueError` naming the value.
