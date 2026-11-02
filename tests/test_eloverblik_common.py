@@ -11,6 +11,7 @@ from conftest import (
     ELOVERBLIK_POINT_B,
     ELOVERBLIK_REFRESH_TOKEN,
     EloverblikService,
+    eloverblik_details,
     eloverblik_point,
     eloverblik_point_id,
 )
@@ -492,3 +493,87 @@ def test_meter_data_without_a_token_makes_no_request_when_nothing_is_wanted(
 
     assert len(frame) == 24
     assert frame.isna().all().all()
+
+
+def _correlation_of_call(service: EloverblikService, suffix: str, point: str) -> str:
+    """The correlation id the mock gave the request for `suffix` naming `point`."""
+    import uuid
+
+    for number, request in enumerate(service.requests, start=1):
+        if request.url.path.endswith(suffix) and point.encode() in request.content:
+            return str(uuid.UUID(int=number, version=4))
+    raise AssertionError(f"no request for {point}")
+
+
+def test_a_per_point_meter_data_error_carries_the_responses_correlation_id() -> None:
+    service = EloverblikService()
+    service.codes = {ELOVERBLIK_POINT_B: {None: 30011}}
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        get_meter_data(
+            "2026-10-01",
+            "2026-10-02",
+            aggregation="day",
+            metering_point_ids=[ELOVERBLIK_POINT_A, ELOVERBLIK_POINT_B],
+            client=client,
+        )
+
+    expected = _correlation_of_call(service, "/Day", ELOVERBLIK_POINT_B)
+    assert caught.value.correlation_id == expected
+
+
+def test_a_per_point_details_error_carries_the_responses_correlation_id() -> None:
+    service = EloverblikService()
+    service.detail_codes = {ELOVERBLIK_POINT_B: 20012}
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        get_metering_point_details(
+            [ELOVERBLIK_POINT_A, ELOVERBLIK_POINT_B], client=client
+        )
+
+    expected = _correlation_of_call(service, "getdetails", ELOVERBLIK_POINT_B)
+    assert caught.value.error_code == 20012
+    assert caught.value.correlation_id == expected
+
+
+def test_a_per_point_charges_error_carries_the_responses_correlation_id() -> None:
+    service = EloverblikService()
+    service.charge_codes = {ELOVERBLIK_POINT_B: 20012}
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        get_charges([ELOVERBLIK_POINT_A, ELOVERBLIK_POINT_B], client=client)
+
+    expected = _correlation_of_call(service, "getcharges", ELOVERBLIK_POINT_B)
+    assert caught.value.error_code == 20012
+    assert caught.value.correlation_id == expected
+
+
+def test_a_payload_error_while_parsing_a_point_carries_the_correlation_id() -> None:
+    service = EloverblikService()
+    service.details[ELOVERBLIK_POINT_A] = eloverblik_details(
+        ELOVERBLIK_POINT_A, typeOfMP=5
+    )
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        get_metering_point_details(ELOVERBLIK_POINT_A, client=client)
+
+    assert caught.value.error_code is None
+    assert caught.value.correlation_id == _correlation_of_call(
+        service, "getdetails", ELOVERBLIK_POINT_A
+    )
+
+
+def test_the_correlation_id_is_that_of_the_batch_that_failed() -> None:
+    ids = [eloverblik_point_id(n) for n in range(1, 13)]
+    service = EloverblikService([eloverblik_point(i) for i in ids])
+    service.charge_codes = {ids[11]: 20012}
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        get_charges(ids, client=client)
+
+    assert caught.value.metering_point_id == ids[11]
+    assert len(service.calls("getcharges")) == 2
+    expected = _correlation_of_call(service, "getcharges", ids[11])
+    assert caught.value.correlation_id == expected
+    first = _correlation_of_call(service, "getcharges", ids[0])
+    assert expected != first

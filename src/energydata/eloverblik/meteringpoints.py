@@ -8,6 +8,7 @@ import pandas as pd
 from energydata.utils.readers import JsonValue
 
 from ._common import (
+    _carrying,
     _client_scope,
     _nullable_text,
     _number,
@@ -247,17 +248,18 @@ def get_metering_point_details(
         results = active.run(lambda: work(active))
     columns: dict[str, list[object]] = {name: [] for name in _DETAIL_COLUMNS}
     for result in results:
-        _unpack(result, path)
-        details = result.get("result")
-        label = f"{path}: point {result.get('id')}"
-        if not isinstance(details, dict):
-            raise EloverblikError(f"{label}: 'result' is not a JSON object")
-        for field, column in zip(_DETAIL_FIELDS, _DETAIL_COLUMNS, strict=True):
-            if field == _NUMERIC_DETAIL:
-                value = details.get(field)
-                columns[column].append(_number(value, field, label, nullable=True))
-            else:
-                columns[column].append(_nullable_text(details, field, label))
+        with _carrying(result):
+            _unpack(result, path)
+            details = result.get("result")
+            label = f"{path}: point {result.get('id')}"
+            if not isinstance(details, dict):
+                raise EloverblikError(f"{label}: 'result' is not a JSON object")
+            for field, column in zip(_DETAIL_FIELDS, _DETAIL_COLUMNS, strict=True):
+                if field == _NUMERIC_DETAIL:
+                    value = details.get(field)
+                    columns[column].append(_number(value, field, label, nullable=True))
+                else:
+                    columns[column].append(_nullable_text(details, field, label))
     return pd.DataFrame(
         {
             name: pd.Series(

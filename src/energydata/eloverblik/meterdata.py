@@ -12,7 +12,14 @@ from energydata.utils.frames import period_index
 from energydata.utils.periods import DANISH_TZ, TimeLike, resolve_period
 from energydata.utils.readers import JsonValue
 
-from ._common import _client_scope, _post_points, _resolve_ids, _text, _unpack
+from ._common import (
+    _carrying,
+    _client_scope,
+    _post_points,
+    _resolve_ids,
+    _text,
+    _unpack,
+)
 from .client import EloverblikClient, EloverblikError, _showcase_has_token
 
 type Aggregation = Literal["quarter", "hour", "day", "month", "year"]
@@ -484,7 +491,8 @@ def get_meter_data(
     for (low, high), results in zip(windows, parts, strict=True):
         path = f"/meterdata/gettimeseries/{low.isoformat()}/{high.isoformat()}/{name}"
         for result in results:
-            _collect(result, path, aggregation, requested, collected)
+            with _carrying(result):
+                _collect(result, path, aggregation, requested, collected)
     return _frame(ids, collected, first, last, aggregation)
 
 

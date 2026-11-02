@@ -9,7 +9,7 @@ from typing import Literal, cast
 import httpx
 
 from energydata.utils.api_client import ApiClient
-from energydata.utils.readers import JsonValue, ParseError, read_json
+from energydata.utils.readers import JsonValue, ParseError, read_json, read_response
 from energydata.utils.retry import (
     DEFAULT_TIMEOUT,
     HoldoffTooLongError,
@@ -170,15 +170,26 @@ class EloverblikClient(ApiClient):
             RetriesExhaustedError: If a transport failure outlasted the retries.
             RuntimeError: If awaited outside the client's own loop.
         """
+        payload, _ = await self._fetch(method, path, params, body)
+        return payload
+
+    async def _fetch(
+        self,
+        method: str,
+        path: str,
+        params: Mapping[str, str] | None,
+        body: object,
+    ) -> tuple[dict[str, JsonValue], str | None]:
+        """`fetch_json`, also returning the response's `X-Correlation-ID`."""
         self._check_token()
         access = await self._access_token(None)
         try:
-            return await self._json(method, path, params, body, _bearer(access))
+            return await self._json_with_id(method, path, params, body, _bearer(access))
         except EloverblikError as exc:
             if exc.status != 401:
                 raise
         access = await self._access_token(access)
-        return await self._json(method, path, params, body, _bearer(access))
+        return await self._json_with_id(method, path, params, body, _bearer(access))
 
     def get_json(
         self,
@@ -251,10 +262,23 @@ class EloverblikClient(ApiClient):
         headers: Mapping[str, str],
     ) -> dict[str, JsonValue]:
         """One request, with errors mapped to `EloverblikError`."""
+        payload, _ = await self._json_with_id(method, path, params, body, headers)
+        return payload
+
+    async def _json_with_id(
+        self,
+        method: str,
+        path: str,
+        params: Mapping[str, str] | None,
+        body: object,
+        headers: Mapping[str, str],
+    ) -> tuple[dict[str, JsonValue], str | None]:
+        """`_json`, also returning the response's `X-Correlation-ID`."""
         try:
-            payload = await self.request(
-                method, path, params=params, fmt="json", headers=headers, json=body
+            response = await self.request_response(
+                method, path, params=params, headers=headers, json=body
             )
+            payload = read_response(response, "json")
         except httpx.HTTPStatusError as exc:
             raise _api_error(path, exc.response, self._secrets()) from exc
         except (RetriesExhaustedError, HoldoffTooLongError) as exc:
@@ -273,7 +297,10 @@ class EloverblikClient(ApiClient):
                 f"got {type(payload).__name__}",
                 status=200,
             )
-        return cast("dict[str, JsonValue]", payload)
+        return (
+            cast("dict[str, JsonValue]", payload),
+            response.headers.get("X-Correlation-ID"),
+        )
 
 
 def _bearer(token: str) -> dict[str, str]:

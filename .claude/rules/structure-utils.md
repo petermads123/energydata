@@ -69,6 +69,7 @@ runnable as `python -m energydata.utils.<module>`.
 |---|---|
 | `ApiClient(base_url: str, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, headers: Mapping[str, str] \| None = None, transport: httpx.AsyncBaseTransport \| None = None)` | Source-agnostic base. Owns one asyncio loop on a daemon thread, started on first use, with an `httpx.AsyncClient` and a semaphore on it. Empty `base_url` or `max_concurrency < 1` is a `ValueError`. Properties `base_url`, `max_concurrency`, `closed`. |
 | `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> Parsed` | One request under the semaphore through `async_request_with_retry`, parsed with `read_response`; `headers` are merged over the client's for this request, `json` is sent as the body. Subclass extension point; `RuntimeError` unless awaited on the client's own loop (inside `run`). |
+| `async ApiClient.request_response(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> httpx.Response` | What `request` sends, under the same semaphore, retry and exceptions (all but `ParseError`), returning the response unparsed so a caller can read its status and headers; `request` is `read_response(await request_response(...), fmt)`. Same loop rule as `request`. |
 | `ApiClient.run[T](work: Callable[[], Awaitable[T]]) -> T` | Run `work()` on the client's loop and block. Safe from any thread, including one with a running loop. `RuntimeError` when closed or called from the loop thread. An interrupt cancels the work. |
 | `ApiClient.close() -> None` | Cancel remaining work, close the HTTP client, stop the loop, join the thread. Idempotent. `RuntimeError` if called from the client's own loop thread. |
 | `ApiClient.__enter__() -> Self`, `__exit__(*exc_info) -> None` | Context manager; exit closes. |
@@ -133,7 +134,7 @@ One suite per module, written at step 5. No test touches the network.
   joining, parsing, retry of 503 and not of 400, the concurrency cap (also across
   threads), `run` inside a running loop and from other threads, reuse, `run`/`close` from
   the loop thread and `request` on a foreign loop raising, idempotent `close`, the context
-  manager, cancellation on close and on interrupt, the `run`/`close` race.
+  manager, cancellation on close and on interrupt, the `run`/`close` race, and `request_response` (unparsed body and headers, same sending as `request`, retry, status error, semaphore cap, foreign loop).
 - `tests/test_periods.py` — `resolve_period`: whole local day (92/96/100), lone
   timestamp, date versus timestamp strings, naive as Danish time, exclusive end, aware
   input converted, the repeated hour, every `ValueError` naming the value.

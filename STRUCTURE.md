@@ -134,7 +134,7 @@ plain `pytest`, runnable offline with `ELOVERBLIK_LIVE_MOCK=1`), and the offline
 `tests/test_eloverblik_client.py`, `tests/test_eloverblik_common.py`,
 `tests/test_eloverblik_meteringpoints.py`, `tests/test_eloverblik_meterdata.py`,
 `tests/test_eloverblik_charges.py` and `tests/test_eloverblik_spec.py`. The `ApiClient.request`
-headers/json and `gather_ordered` changes are covered in `tests/test_api_client.py` and
+headers/json, `ApiClient.request_response` and `gather_ordered` changes are covered in `tests/test_api_client.py` and
 `tests/test_chunking.py`.
 
 ## Package: `src/energydata/`

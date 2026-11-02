@@ -22,7 +22,10 @@ open). A string is one id; ids are stripped and must be exactly 18 digits; an em
 malformed id or a duplicate is a `ValueError` naming it, before any request; `None` lists the
 linked points (`includeAll=false`) and uses all of them in listing order, none linked being a
 `ValueError`. Requests are batched at most 10 points each, concurrently through
-`gather_ordered`, and per-point results are matched to the requested ids by their `id`.
+`gather_ordered`, and per-point results are matched to the requested ids by their `id`. Each result remembers the
+`X-Correlation-ID` of the response it arrived in (the client's private `_fetch` returns it,
+through `ApiClient.request_response`), so every per-point `EloverblikError` carries it: the
+failure `_unpack` raises, and any payload error raised while a function parses that point's result.
 
 ## `src/energydata/eloverblik/client.py`
 
@@ -31,7 +34,7 @@ linked points (`includeAll=false`) and uses all of them in listing order, none l
 | `BASE_URL: str` | `"https://api.eloverblik.dk/customerapi/api"`. |
 | `REFRESH_TOKEN_ENV: str` | `"ELOVERBLIK_REFRESH_TOKEN"`, read when no token is passed. |
 | `DEFAULT_POLICY: RetryPolicy` | `RetryPolicy(max_attempts=4, base_delay=15.0, max_delay=60.0)`: 429/503 waits grow towards the minute Eloverblik asks for. |
-| `EloverblikError(message: str, *, status: int \| None = None, error_code: int \| None = None, error_text: str \| None = None, metering_point_id: str \| None = None, correlation_id: str \| None = None)` | Attributes as the keywords; `str()` is the message only. An API error response, or an exhausted retry or holdoff on a response: `status` the HTTP status, `error_code`/`error_text` from a JSON body (`errorCode`; `errorText`, else `detail`, else `title`), `correlation_id` from `X-Correlation-ID`. A per-point failure inside a 200 response: `status` 200, with the code, text and point. A 2xx body that is not a JSON object: `status` 200. Payload checks: the other attributes `None`. |
+| `EloverblikError(message: str, *, status: int \| None = None, error_code: int \| None = None, error_text: str \| None = None, metering_point_id: str \| None = None, correlation_id: str \| None = None)` | Attributes as the keywords; `str()` is the message only. An API error response, or an exhausted retry or holdoff on a response: `status` the HTTP status, `error_code`/`error_text` from a JSON body (`errorCode`; `errorText`, else `detail`, else `title`), `correlation_id` from `X-Correlation-ID`. A per-point failure inside a 200 response: `status` 200, with the code, text, point and the response's `correlation_id`. A 2xx body that is not a JSON object: `status` 200. Payload checks: the other attributes `None`. |
 | `MissingTokenError(EloverblikError)` | The first request of a client with no refresh token; the message names `REFRESH_TOKEN_ENV`. |
 | `EloverblikClient(refresh_token: str \| None = None, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 2, transport: httpx.AsyncBaseTransport \| None = None)` | `ApiClient` on `BASE_URL` with `Accept: application/json`; `policy=None` means `DEFAULT_POLICY`. Token stripped, blank is missing, one that is not printable ASCII without spaces is refused at the first request without being echoed. `repr` is `EloverblikClient(token=set \| missing)`. |
 | `EloverblikClient.has_refresh_token: bool` (property) | Whether a usable refresh token is held. |
@@ -45,7 +48,8 @@ Private module: the shared path of the point-scoped functions — id normalisati
 scope, batching, the linked-point default, the batched `POST` and per-point result unpacking,
 and payload-shape checks. Results are mapped by `id`: an `id` not requested or a requested id
 with no result is an `EloverblikError`; a repeated id keeps all its results. A per-point failure
-raises `EloverblikError` with status 200 unless its code is tolerated.
+raises `EloverblikError` with status 200 and the response's correlation id unless its code is
+tolerated.
 
 | Signature | Description |
 |---|---|

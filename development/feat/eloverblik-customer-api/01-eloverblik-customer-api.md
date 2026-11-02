@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -18,7 +18,7 @@
 | 2 | Plan | `/plan` | with the user, unless the critique is clean | done |
 | 3 | Implement | `/implement` | in `/build` | done |
 | 4 | Verify | `/verify` | in `/build` | done |
-| 5 | Test | `/test` | in `/build` | halted |
+| 5 | Test | `/test` | in `/build` | done |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
 | 8 | Recommend | `/recommend` | with the user | pending |
@@ -529,13 +529,18 @@ Reader reports merged: `input-space` and `contract` (both saved verbatim in the 
 | T12 | `test_scrub_*` (spec file). The runner itself (outside the repo) is run by step 6 | pass |
 | T13 | `test_the_readme_names_*`, `test_structure_md_*`, `test_the_rules_file_*`, `test_the_utils_rules_file_*` | pass |
 
-Whole tree: `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest`: 3274 passed, 38 deselected, 2 errors. The 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones (section 4), excluded: not this round's.
+Whole tree after the halt was answered: `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest`: 3285 passed, 38 deselected, 2 errors. The 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones (section 4), excluded: not this round's.
 
 **Bugs the tests found, fixed in code:** (1) ids accepted non-ASCII digits (`\d` -> `[0-9]`); (2) a point listed twice by the account multiplied rows (linked ids de-duplicated); (3) a server error text echoing a token leaked into the message and `error_text` (tokens of 6+ characters replaced by `<token>`); (4) an empty/`NaT`/out-of-range `timeInterval.start` silently dropped data (now `EloverblikError`); (5) a huge `position` leaked a raw pandas overflow (now `EloverblikError`); (6) parse errors in `_collect` did not carry `metering_point_id` (now set); (7) a result carrying another requested point's series was accepted (mRID must equal the result's id); (8) tariff rows were in API order (now by position, API order for ties); (9) a null tariff `position` (nullable in the spec) raised (now `<NA>`, sorted last); (10) a charge date beyond the ns range leaked a raw pandas error (now `EloverblikError`); (11) `bytes` as ids named the first byte (now refused by name); (12) `get_meter_data` docstring overstated `MissingTokenError`. Decisions on the record: (7) and (9) read section 2's column contract and the spec; `9999-12-31` charge dates raise a clean `EloverblikError` rather than becoming NaT (the live run shows whether the API sends them).
 
 Reader cases not written, with reasons: `_unpack` string-coded `errorCode` is pinned (not tolerated) pending the live run; `1e400` charge price cannot be serialised by the mock (covered through `_number`); non-ASCII digits in a `position` text are accepted by `int()` (low value); nonexistent naive charge timestamps are covered by the ambiguity case; purity and idempotency are covered once per function.
 
-**Open (halt): per-point errors carry no `correlation_id`.** See Halted.
+**Halt answered (a), 2026-11-02 — per-point errors now carry `correlation_id`.** Added `ApiClient.request_response` (the raw response; `request` rebuilt on it, behaviour identical) and made `EloverblikClient` use it through a private `_fetch` that also returns the response's `X-Correlation-ID`; `fetch_json`/`get_json` signatures unchanged. `_post_points` tags each per-point result with its response's id; `_unpack` and a `_carrying` wrapper around each function's per-point parsing (meter data `_collect`, details, charges) put it on every per-point `EloverblikError`, including payload errors; errors `_post_points` raises itself carry it too.
+
+| Intent | Tests (file) | Result |
+|---|---|---|
+| A7 `request_response` | `test_request_response_*` x6 (`test_api_client.py`): unparsed body and headers, same sending as `request`, 503 retried, 400 status error without retry, foreign loop, shared semaphore cap; the existing `request` tests unchanged | pass |
+| A7 correlation id | `test_a_per_point_meter_data_error_*`, `test_a_per_point_details_error_*`, `test_a_per_point_charges_error_*`, `test_a_payload_error_while_parsing_a_point_*`, `test_the_correlation_id_is_that_of_the_batch_that_failed` (`test_eloverblik_common.py`): the id equals the mock's header for that response; with 12 points, the id of the failing second batch | pass |
 
 Edge cases considered and deliberately skipped: a real transport reaching the network (the autouse guard and the live-mock subprocess run cover it); the live runner script (outside the repo, step 6 runs it).
 

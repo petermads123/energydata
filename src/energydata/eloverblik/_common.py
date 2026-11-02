@@ -122,26 +122,34 @@ async def _post_points(
 
     async def one(batch: list[str]) -> list[dict[str, JsonValue]]:
         body = {"meteringPoints": {"meteringPoint": batch}}
-        payload = await client.fetch_json("POST", path, body=body)
+        payload, correlation_id = await client._fetch("POST", path, None, body)
         result = payload.get("result")
         if not isinstance(result, list):
-            raise EloverblikError(f"{path}: the response has no 'result' list")
+            raise EloverblikError(
+                f"{path}: the response has no 'result' list",
+                correlation_id=correlation_id,
+            )
         found: list[dict[str, JsonValue]] = []
         for item in result:
             if not isinstance(item, dict):
-                raise EloverblikError(f"{path}: a result is not a JSON object")
+                raise EloverblikError(
+                    f"{path}: a result is not a JSON object",
+                    correlation_id=correlation_id,
+                )
             if item.get("id") not in batch:
                 raise EloverblikError(
                     f"{path}: a result for metering point {item.get('id')!r}, "
                     "which was not requested",
                     metering_point_id=_id_of(item),
+                    correlation_id=correlation_id,
                 )
-            found.append(item)
+            found.append(_PointResult(item, correlation_id))
         for point_id in batch:
             if not any(item["id"] == point_id for item in found):
                 raise EloverblikError(
                     f"{path}: no result for metering point {point_id}",
                     metering_point_id=point_id,
+                    correlation_id=correlation_id,
                 )
         return found
 
@@ -153,6 +161,30 @@ async def _post_points(
     parts = await gather_ordered([bind(batch) for batch in _batches(ids)])
     flat = [item for part in parts for item in part]
     return [item for point_id in ids for item in flat if item["id"] == point_id]
+
+
+class _PointResult(dict[str, JsonValue]):
+    """A per-point result that remembers the `X-Correlation-ID` of its response."""
+
+    def __init__(self, items: dict[str, JsonValue], correlation_id: str | None) -> None:
+        super().__init__(items)
+        self.correlation_id = correlation_id
+
+
+def _correlation_of(result: dict[str, JsonValue]) -> str | None:
+    """The correlation id of the response `result` came from, if known."""
+    return result.correlation_id if isinstance(result, _PointResult) else None
+
+
+@contextmanager
+def _carrying(result: dict[str, JsonValue]) -> Iterator[None]:
+    """Give any `EloverblikError` raised inside the response's correlation id."""
+    try:
+        yield
+    except EloverblikError as exc:
+        if exc.correlation_id is None:
+            exc.correlation_id = _correlation_of(result)
+        raise
 
 
 def _id_of(item: dict[str, JsonValue]) -> str | None:
@@ -195,6 +227,7 @@ def _unpack(
         error_code=error_code,
         error_text=error_text,
         metering_point_id=point_id,
+        correlation_id=_correlation_of(result),
     )
 
 

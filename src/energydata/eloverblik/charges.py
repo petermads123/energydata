@@ -9,6 +9,7 @@ from energydata.utils.periods import DANISH_TZ
 from energydata.utils.readers import JsonValue
 
 from ._common import (
+    _carrying,
     _client_scope,
     _nullable_text,
     _number,
@@ -169,8 +170,9 @@ def get_charges(
         results = active.run(lambda: work(active))
     rows: list[dict[str, object]] = []
     for result in results:
-        _unpack(result, _PATH)
-        rows.extend(_rows(_text(result, "id", _PATH), result))
+        with _carrying(result):
+            _unpack(result, _PATH)
+            rows.extend(_rows(_text(result, "id", _PATH), result))
 
     def column(name: str) -> list[object]:
         return [row[name] for row in rows]
