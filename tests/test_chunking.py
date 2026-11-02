@@ -12,6 +12,7 @@ from energydata.utils import (
     date_windows,
     fetch_chunked,
     gather_chunked,
+    gather_ordered,
 )
 
 CPH = ZoneInfo("Europe/Copenhagen")
@@ -631,3 +632,91 @@ def test_gather_chunked_propagates_an_outer_cancellation() -> None:
             await task
 
     asyncio.run(asyncio.wait_for(go(), TIMEOUT))
+
+
+# --- gather_ordered ----------------------------------------------------------------
+
+
+async def _after[T](delay: float, value: T) -> T:
+    await asyncio.sleep(delay)
+    return value
+
+
+async def _fail_after(delay: float, error: Exception) -> None:
+    await asyncio.sleep(delay)
+    raise error
+
+
+def test_gather_ordered_of_nothing_is_an_empty_list() -> None:
+    assert asyncio.run(gather_ordered([])) == []
+
+
+def test_gather_ordered_returns_results_in_call_order_not_finish_order() -> None:
+    calls = [
+        lambda: _after(0.03, "a"),
+        lambda: _after(0.01, "b"),
+        lambda: _after(0.02, "c"),
+    ]
+
+    assert asyncio.run(gather_ordered(calls)) == ["a", "b", "c"]
+
+
+def test_gather_ordered_keeps_falsy_results() -> None:
+    calls = [lambda: _after(0, 0), lambda: _after(0, None), lambda: _after(0, [])]
+
+    assert asyncio.run(gather_ordered(calls)) == [0, None, []]
+
+
+def test_gather_ordered_raises_the_lowest_index_failure_not_the_first_in_time() -> None:
+    late = KeyError("zero")
+
+    async def first() -> None:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise late from None
+
+    calls = [first, lambda: _fail_after(0, ValueError("one"))]
+
+    with pytest.raises(KeyError) as caught:
+        asyncio.run(gather_ordered(calls))
+
+    assert caught.value is late
+    assert isinstance(caught.value.__cause__, ExceptionGroup)
+
+
+def test_gather_ordered_reraises_the_same_exception_object() -> None:
+    error = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(gather_ordered([lambda: _fail_after(0, error)]))
+
+    assert caught.value is error
+
+
+def test_gather_ordered_cancels_the_calls_still_running_after_a_failure() -> None:
+    cancelled: list[bool] = []
+
+    async def slow() -> None:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    calls = [slow, lambda: _fail_after(0, ValueError("x"))]
+
+    with pytest.raises(ValueError, match="x"):
+        asyncio.run(gather_ordered(calls))
+
+    assert cancelled == [True]
+
+
+def test_the_private_alias_is_gone_and_the_importers_use_the_public_name() -> None:
+    import energydata.energidataservice.day_ahead as day_ahead
+    import energydata.minstroem._series as series
+    import energydata.utils.chunking as chunking
+
+    assert not hasattr(chunking, "_gather_ordered")
+    assert day_ahead.gather_ordered is gather_ordered
+    assert series.gather_ordered is gather_ordered
