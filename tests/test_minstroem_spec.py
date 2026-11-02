@@ -2276,7 +2276,7 @@ def test_the_pyproject_registers_the_live_marker_and_deselects_it_by_default() -
     text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
 
     assert (
-        'markers = ["live: calls the real Min Strøm API; needs MINSTROEM_API_KEY"]'
-        in text
-    )
+        'markers = ["live: calls a real API; needs MINSTROEM_API_KEY (Min Strøm) '
+        'or ELOVERBLIK_REFRESH_TOKEN (Eloverblik)"]'
+    ) in text
     assert "addopts = \"-v -m 'not live'\"" in text

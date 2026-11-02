@@ -41,12 +41,16 @@ linked points (`includeAll=false`) and uses all of them in listing order, none l
 
 ## `src/energydata/eloverblik/_common.py`
 
-Private: `_normalise_ids`, `_client_scope`, `_batches` (at most 10), `_linked_ids`,
-`_resolve_ids`, `_post_points` (batched `POST`, results mapped by `id`: an `id` not requested
-or a requested id with no result is an `EloverblikError`; a repeated id keeps all its results),
-`_unpack` (a per-point failure raises `EloverblikError` with status 200 unless its code is
-tolerated), and the payload helpers `_text`, `_nullable_text`, `_number`. `main()` shows id
-normalisation and batching offline.
+Private module: the shared path of the point-scoped functions — id normalisation, the client
+scope, batching, the linked-point default, the batched `POST` and per-point result unpacking,
+and payload-shape checks. Results are mapped by `id`: an `id` not requested or a requested id
+with no result is an `EloverblikError`; a repeated id keeps all its results. A per-point failure
+raises `EloverblikError` with status 200 unless its code is tolerated.
+
+| Signature | Description |
+|---|---|
+| `BATCH_SIZE: int` | `10`, the most points per request. |
+| `main() -> None` | Offline showcase of id normalisation and batching. |
 
 ## `src/energydata/eloverblik/meteringpoints.py`, `meterdata.py`, `charges.py`
 
@@ -79,7 +83,9 @@ and `30016` give NaN for that window, any other raises. The clock is read only t
 refresh_token=...)`, a mock written from the spec: `/token`, bearer check, `/isalive`, the
 listing, `getdetails`, `getcharges` and `gettimeseries` with request-level validation (HTTP
 400 ProblemDetails with `errorCode`: 20013, 30000-30004, 30008, 30014, 30017), generated CIM data
-(`dateTo` exclusive, Danish dates, quality `A04`, DST-correct), scripting attributes (`codes`,
+(`dateTo` exclusive, Danish dates, quality `A04`, DST-correct), served data (`points`,
+`unlinked` for `includeAll=true`, `details` and `charges` by point id, property `point_ids`),
+a `/token` counter `token_calls`, scripting attributes (`codes`,
 `detail_codes`, `charge_codes`, `a02`, `gaps`, `resolution_override`, `unit_override`,
 `out_of_order`, `drop_ids`, `repeat_ids`, `extra_ids`, `max_days`, `overrides`), an
 `X-Correlation-ID` on every response, every request in `requests` (`calls(suffix)`,

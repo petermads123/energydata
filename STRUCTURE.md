@@ -43,13 +43,13 @@ src/                    everything installable; nothing outside it is packaged
     energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
     minstroem/          Min Strøm Consumer API: client, addresses, consumption, solar export, costs, prices and price forecast
     eloverblik/         Eloverblik Customer API: client, metering points and details, meter data, charges
-tests/                  pytest suite, one test_<module>.py per module, prefixed test_<subpackage>_ where a name would collide (test_minstroem_*.py); fixtures/ holds recorded payloads and the Min Strøm OpenAPI spec
+tests/                  pytest suite, one test_<module>.py per module, prefixed test_<subpackage>_ where a name would collide (test_minstroem_*.py, test_eloverblik_*.py); fixtures/ holds recorded payloads and the Min Strøm and Eloverblik OpenAPI specs
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
 .vscode/                editor config (Ruff as formatter, format on save)
 pyproject.toml          packaging, Ruff, mypy and pytest configuration
 DEVELOPMENT.md          development-side open questions and things to fix later (see CLAUDE.md)
-README.md               human guide: install, every source's endpoints and columns, the live Min Strøm test command, development setup
+README.md               human guide: install, every source's endpoints and columns, the live Min Strøm and Eloverblik test commands, development setup
 CLAUDE.md               routing map for Claude
 STRUCTURE.md            this file
 ```
@@ -62,7 +62,7 @@ this subpackage. Modules: `src/energydata/utils/__init__.py` (re-exports every p
 `src/energydata/utils/retry.py` (retrying sync/async request wrappers),
 `src/energydata/utils/readers.py` (JSON/XML/CSV/ZIP body readers),
 `src/energydata/utils/chunking.py` (date-range windows, chunked and concurrent chunked
-fetch), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
+fetch, ordered concurrent gather), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
 with its own event loop), `src/energydata/utils/periods.py` (`start`/`end` resolution),
 `src/energydata/utils/zones.py` (bidding-zone normalisation) and
 `src/energydata/utils/frames.py` (period index, block index, wide pivot, resolution expansion, NaN

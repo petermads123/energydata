@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
 | 2 | Plan | `/plan` | with the user, unless the critique is clean | done |
 | 3 | Implement | `/implement` | in `/build` | done |
-| 4 | Verify | `/verify` | in `/build` | pending |
+| 4 | Verify | `/verify` | in `/build` | done |
 | 5 | Test | `/test` | in `/build` | pending |
 | 6 | Concept check | `/concept-check` | in `/build` | pending |
 | 7 | Ship | `/ship` | in `/build` | pending |
@@ -491,12 +491,17 @@ written. Departures and decisions the plan left open:
 
 | Check | Result |
 |---|---|
-| `ruff check .` | |
-| `ruff format --check .` | |
-| `mypy` | |
-| Plan completeness | every signature in the Public API table exists as written |
-| `STRUCTURE.md` | in sync |
-| `python -m <package>.<module>` | |
+| `ruff check .` | `All checks passed!` |
+| `ruff format --check .` | `101 files already formatted` |
+| `mypy` | `Success: no issues found in 64 source files` |
+| `pytest` | first run: 1 failed, 1681 passed, 38 deselected (`-x`): `test_minstroem_spec.py::test_the_pyproject_registers_the_live_marker_and_deselects_it_by_default` asserted the old marker text; the plan changes that text on purpose (guide: `pyproject.toml` marker names both live APIs), so the assertion was updated to the new text. Re-run (whole suite): `2725 passed, 38 deselected, 2 errors` — the 2 errors are the `tests/test_readers.py` ones below, present on `origin/main` too |
+| Plan completeness | every signature in the Public API table exists as written (checked with `inspect.signature`: `ApiClient.request` with `headers`/`json`, `gather_ordered`, the constants, `EloverblikError`, `MissingTokenError`, `EloverblikClient` and its `has_refresh_token`, `fetch_json`, `get_json`, the four `get_*`, `Aggregation`, `AGGREGATIONS`; `main()` in every module but `__init__.py`). No Missing, Deviation or Unplanned. Extra public name `BATCH_SIZE` in `_common.py` is a module constant of a private module, now listed in the rules file |
+| `STRUCTURE.md` | in sync after the auditor's edits below |
+| `python -m energydata.eloverblik.<module>` | `_common`: batches `[10, 10, 3]`, padded id accepted, 17-digit id refused, then the no-token line. `client`, `meteringpoints`, `charges`: the no-token line (`Set ELOVERBLIK_REFRESH_TOKEN to run this showcase against the live Eloverblik API.`). `meterdata`: offline windows and alignment lines, then the no-token line. All exit 0; only the expected `RuntimeWarning` about re-export. |
+
+**Structure-auditor findings (5), all applied:** (1) `structure-eloverblik.md` `_common.py` section listed private helpers and omitted `BATCH_SIZE` — rewritten as a signature table. (2) `structure-utils.md` conftest bullet now names the Eloverblik support. (3) `STRUCTURE.md` tests line names `test_eloverblik_*.py` and the Eloverblik spec fixture. (4) `structure-eloverblik.md` mock sentence now lists `points`, `unlinked`, `details`, `charges`, `point_ids`, `token_calls`. (5) `STRUCTURE.md` README line and `chunking.py` description updated. Each checked against the code as it stands (`BATCH_SIZE` at `_common.py:18`, attributes at `conftest.py:717-740`).
+
+**`tests/test_readers.py` errors (step 3's note):** the 2 errors are not from this round. In a throwaway worktree of `origin/main` (removed afterwards), `pytest tests/test_readers.py` gives `151 passed, 2 errors`: a `[[[[…` parametrize id in `test_read_json_raises_a_parse_error_naming_json` makes `PYTEST_CURRENT_TEST` longer than 32767 characters, which Windows refuses (`ValueError: the environment variable is longer than 32767 characters`) at teardown. A pre-existing Windows-only defect on `main`; not fixed here (out of scope).
 
 ---
 
