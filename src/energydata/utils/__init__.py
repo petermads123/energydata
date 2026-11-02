@@ -1,7 +1,13 @@
 """Shared utilities for the data source subpackages."""
 
 from .api_client import ApiClient
-from .chunking import async_fetch_chunked, date_windows, fetch_chunked, gather_chunked
+from .chunking import (
+    async_fetch_chunked,
+    date_windows,
+    fetch_chunked,
+    gather_chunked,
+    gather_ordered,
+)
 from .frames import (
     block_index,
     combine_levels,

@@ -15,7 +15,7 @@ from typing import Literal
 
 import pandas as pd
 
-from energydata.utils.chunking import _gather_ordered
+from energydata.utils.chunking import gather_ordered
 from energydata.utils.frames import period_index
 from energydata.utils.periods import DANISH_TZ, TimeLike, resolve_period
 from energydata.utils.readers import JsonValue
@@ -487,7 +487,7 @@ async def _fetch_windows(
 
         return call
 
-    parsed = await _gather_ordered([bind(lo, hi) for lo, hi in windows])
+    parsed = await gather_ordered([bind(lo, hi) for lo, hi in windows])
     currency, vat_included = parsed[0].currency, parsed[0].vat_included
     for part in parsed[1:]:
         if (part.currency, part.vat_included) != (currency, vat_included):

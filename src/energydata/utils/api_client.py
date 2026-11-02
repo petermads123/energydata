@@ -92,6 +92,8 @@ class ApiClient:
         *,
         params: Mapping[str, str | int | float] | None = None,
         fmt: Format | None = None,
+        headers: Mapping[str, str] | None = None,
+        json: object = None,
     ) -> Parsed:
         """Send one request on the client's loop and parse the body.
 
@@ -104,6 +106,8 @@ class ApiClient:
             path: Appended to `base_url`.
             params: Query parameters.
             fmt: The body format. `None` picks it from the `Content-Type`.
+            headers: Headers for this request only, merged over the client's.
+            json: A JSON-serialisable request body.
 
         Returns:
             The parsed body.
@@ -119,7 +123,13 @@ class ApiClient:
         url = f"{self._base_url.rstrip('/')}/{path.lstrip('/')}"
         async with semaphore:
             response = await async_request_with_retry(
-                method, url, client=http, policy=self._policy, params=params
+                method,
+                url,
+                client=http,
+                policy=self._policy,
+                params=params,
+                headers=headers,
+                json=json,
             )
         return read_response(response, fmt)
 

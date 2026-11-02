@@ -31,12 +31,9 @@ by heading is updated in the same change.
 
 ## `feat/energidataservice-client` round 1 (2026-10-06)
 
-- **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
-  private helper from `utils/chunking.py` for the lowest-index re-raise rule, and so does
-  `minstroem/_series.py` — the second caller is here; make it public (with a
-  `structure-utils.md` row). It also re-raises `from group_error`, so on windowed Min Strøm
-  paths `MinStroemError.__cause__` is the `ExceptionGroup`, not the httpx error (status,
-  code, reason and request id survive).
+- **`gather_ordered` re-raises `from group_error`**, so on windowed paths the exception's
+  `__cause__` is the `ExceptionGroup`, not the httpx error (status, code, reason and request
+  id survive on the mapped error).
 
 ## `feat/energidataservice-markets` round 1 (2026-10-06)
 

@@ -60,6 +60,7 @@ runnable as `python -m energydata.utils.<module>`.
 | `fetch_chunked[T](fetch: Callable[[datetime, datetime], T], start, end, span) -> list[T]` | One call per window, in order. |
 | `async_fetch_chunked[T](fetch: Callable[[datetime, datetime], Awaitable[T]], start, end, span) -> list[T]` | Same, awaiting each window before the next. |
 | `async gather_chunked[T](fetch: Callable[[datetime, datetime], Awaitable[T]], start: datetime, end: datetime, span: timedelta, *, limit: int \| None = None) -> list[T]` | Every window concurrently, at most `limit` at once (`None` unbounded), results in window order. On failure the rest are cancelled and the lowest-index failed window's exception is raised, chained from the group (never an `ExceptionGroup`). `limit < 1` is a `ValueError`. |
+| `async gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]` | Run the calls concurrently, results in call order. On failure the rest are cancelled and the lowest-index failed call's exception is raised, chained from the task group's `ExceptionGroup` (never an `ExceptionGroup`). |
 | `main() -> None` | Showcase. |
 
 ## `src/energydata/utils/api_client.py`
@@ -67,7 +68,7 @@ runnable as `python -m energydata.utils.<module>`.
 | Signature | Description |
 |---|---|
 | `ApiClient(base_url: str, *, policy: RetryPolicy \| None = None, timeout: float = DEFAULT_TIMEOUT, max_concurrency: int = 4, headers: Mapping[str, str] \| None = None, transport: httpx.AsyncBaseTransport \| None = None)` | Source-agnostic base. Owns one asyncio loop on a daemon thread, started on first use, with an `httpx.AsyncClient` and a semaphore on it. Empty `base_url` or `max_concurrency < 1` is a `ValueError`. Properties `base_url`, `max_concurrency`, `closed`. |
-| `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None) -> Parsed` | One request under the semaphore through `async_request_with_retry`, parsed with `read_response`. Subclass extension point; `RuntimeError` unless awaited on the client's own loop (inside `run`). |
+| `async ApiClient.request(method: str, path: str, *, params: Mapping[str, str \| int \| float] \| None = None, fmt: Format \| None = None, headers: Mapping[str, str] \| None = None, json: object = None) -> Parsed` | One request under the semaphore through `async_request_with_retry`, parsed with `read_response`; `headers` are merged over the client's for this request, `json` is sent as the body. Subclass extension point; `RuntimeError` unless awaited on the client's own loop (inside `run`). |
 | `ApiClient.run[T](work: Callable[[], Awaitable[T]]) -> T` | Run `work()` on the client's loop and block. Safe from any thread, including one with a running loop. `RuntimeError` when closed or called from the loop thread. An interrupt cancels the work. |
 | `ApiClient.close() -> None` | Cancel remaining work, close the HTTP client, stop the loop, join the thread. Idempotent. `RuntimeError` if called from the client's own loop thread. |
 | `ApiClient.__enter__() -> Self`, `__exit__(*exc_info) -> None` | Context manager; exit closes. |
