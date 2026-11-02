@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=2 status=active -->
+<!-- claude-plan step=3 status=active -->
 
 | Field | Value |
 |---|---|
@@ -15,7 +15,7 @@
 | # | Step | Skill | Runs | Status |
 |---|---|---|---|---|
 | 1 | Conceptualize | `/conceptualize` | with the user | done |
-| 2 | Plan | `/plan` | with the user, unless the critique is clean | pending |
+| 2 | Plan | `/plan` | with the user, unless the critique is clean | done |
 | 3 | Implement | `/implement` | in `/build` | pending |
 | 4 | Verify | `/verify` | in `/build` | pending |
 | 5 | Test | `/test` | in `/build` | pending |
@@ -102,15 +102,21 @@ Decided without the user, stated here: `Actual` aggregation is left out — retu
 each have a different native resolution, which does not fit one index; quarter and hour data
 are reached through `quarter` and `hour`. A point whose data comes back at a different
 resolution from the one asked, or in a unit other than kWh, raises an error naming the
-point — never placed on the wrong grid. A point whose result is `30015` (no data) gives an
-all-NaN column; any other per-point error raises.
+point — never placed on the wrong grid. A point whose result is `30015` (no data), `30018`
+(period outside the point's data period or before its registration), `30010` (period not
+covered by the authorization) or `30016` (relation expired) gives NaN for that point in that
+request window; any other per-point error raises. (Amended at step 2 with the user,
+2026-11-02, from "only `30015`".)
 
 ### How it connects to the rest of the repo
 
 Calls `utils`: `ApiClient` (loop, concurrency, retry — 429 and 503 retried with backoff),
 `resolve_period`, the period index and frame helpers in `utils/frames.py` (including the
 two-level column combining), and the chunked fetch helpers where they fit. Nothing calls
-it, and it touches no existing module beyond re-exports and docs. The `DEVELOPMENT.md` note
+it. It changes `utils` in two backward-compatible ways — `ApiClient.request` gains optional
+`headers` and `json`, and `_gather_ordered` becomes public `gather_ordered` (its two importers
+renamed) — and otherwise touches no existing module beyond re-exports and docs. (Amended at
+step 2 with the user, 2026-11-02.) The `DEVELOPMENT.md` note
 on `date_windows` being elapsed-time applies directly: windows must be split on Copenhagen
 calendar dates, not elapsed UTC spans. The flat `tests/` collision is sidestepped as before,
 with a `test_eloverblik_*.py` prefix.
@@ -427,8 +433,8 @@ entry traces to a criterion (`main()` is the repo convention, not a feature).
 
 - **F1** Per-point `30018`/`30010`/`30016` are routine (point registered later, authorization
   or relation period), and "any other per-point error raises" would break ordinary and
-  windowed calls. — **Open: changes a section-1 sentence, put to the user** (recommended:
-  NaN for that point in that window, like `30015`). T4 and the mock already carry it either way.
+  windowed calls. — Applied after the user's decision: NaN for that point in that window, like
+  `30015` (section 1 amended; T4, mock).
 - **F2** `A02` Points arrive with no quantity. — Applied: null/absent quantity → NaN with quality kept (step 6, T4, mock).
 - **F3** The five-year horizon was unhandled. — Applied: `dateFrom` clamped to 1 January of (year − 5), parts before it unrequested and NaN, clock read through `pd.Timestamp.now` (step 5, T5, mock 30017).
 - **F4** Results must map by `id`, not position. — Applied (step 3, T4b, mock).
@@ -442,6 +448,9 @@ entry traces to a criterion (`main()` is the repo convention, not a feature).
 - **F12** Partial current interval. — Applied as a risk and doc note (step 7, 13, Risks).
 
 Not clean: F1 and the `utils` amendment both change section 1, so the user decides.
+The user chose the recommended answers for both; section 1 amended accordingly.
+
+Accepted: by the user, 2026-11-02
 
 ---
 
