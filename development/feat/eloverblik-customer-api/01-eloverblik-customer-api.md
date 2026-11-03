@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -518,6 +518,18 @@ Whole tree: ruff, format, mypy clean; `pytest` 3285 passed, 38 deselected, 2 kno
 **Structure-auditor findings (5), all applied:** (1) `structure-eloverblik.md` `_common.py` section listed private helpers and omitted `BATCH_SIZE` — rewritten as a signature table. (2) `structure-utils.md` conftest bullet now names the Eloverblik support. (3) `STRUCTURE.md` tests line names `test_eloverblik_*.py` and the Eloverblik spec fixture. (4) `structure-eloverblik.md` mock sentence now lists `points`, `unlinked`, `details`, `charges`, `point_ids`, `token_calls`. (5) `STRUCTURE.md` README line and `chunking.py` description updated. Each checked against the code as it stands (`BATCH_SIZE` at `_common.py:18`, attributes at `conftest.py:717-740`).
 
 **`tests/test_readers.py` errors (step 3's note):** the 2 errors are not from this round. In a throwaway worktree of `origin/main` (removed afterwards), `pytest tests/test_readers.py` gives `151 passed, 2 errors`: a `[[[[…` parametrize id in `test_read_json_raises_a_parse_error_naming_json` makes `PYTEST_CURRENT_TEST` longer than 32767 characters, which Windows refuses (`ValueError: the environment variable is longer than 32767 characters`) at teardown. A pre-existing Windows-only defect on `main`; not fixed here (out of scope).
+
+### Re-run after the step-8 send-back (2026-11-03, code as step 3 left it in `915dfe1`)
+
+| Check | Result |
+|---|---|
+| `ruff check .` | `All checks passed!` |
+| `ruff format --check .` | `107 files already formatted` |
+| `mypy` | `Success: no issues found in 70 source files` |
+| `pytest` | `3285 passed, 38 deselected, 2 errors in 300.51s` — the 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones, excluded |
+| Plan completeness | Public API unchanged: `inspect.signature` of `ApiClient.request`/`request_response`, `gather_ordered`, `EloverblikClient` and `fetch_json`, the four `get_*`, `AGGREGATIONS`, `BASE_URL`, `REFRESH_TOKEN_ENV`, `DEFAULT_POLICY` all match section 2; the package exports exactly the planned names. No Missing, Deviation or Unplanned. The send-back changed `meterdata.py` internals only (`PT1D` expected for `day`, `P1D` still accepted). |
+| `python -m energydata.eloverblik.<module>` | `_common` (batches `[10, 10, 3]`, padded id, 17-digit refusal), `meterdata` (windows, misaligned-month refusal), `client`, `meteringpoints`, `charges` (no-token line): all exit 0, only the expected re-export `RuntimeWarning`. |
+| `structure-auditor` | "Nothing to change." `STRUCTURE.md` and `structure-eloverblik.md` match `915dfe1`: PT1D/P1D wording, `meterdata.py` public names, `EloverblikService` surface, the new live-suite helpers all private, `test_eloverblik_spec.py` summary accurate. No edits made. |
 
 ---
 
