@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -657,6 +657,39 @@ Defects in this round's code, for steps 3 to 7:
 `test_date_to_is_exclusive` and the child-point probe were blocked by defect 1 and are
 re-checked by the next live run. Everything else live matched the stated assumptions:
 quality `A04`, 25 rows on the autumn DST day, 730-day requests accepted.
+
+### Re-run after the send-back (2026-11-03, code as `b83824d` left it)
+
+Audited against section 1 first, then the code. Whole tree at this step: ruff, format and mypy clean and
+pytest unchanged from step 5's log (3366 passed, 38 deselected, 2 known `test_readers.py` errors); this
+step re-ran `tests/test_eloverblik_meterdata.py` and `tests/test_eloverblik_spec.py`: 310 passed.
+
+| # | Criterion | Met | Evidence |
+|---|---|---|---|
+| A1 | Metering points | yes | unchanged by the send-back; `test_metering_points_*` green; runner: 2 points with type, settlement, children |
+| A2 | Details | yes | unchanged; `test_details_*`; runner: 2 rows, 57 columns |
+| A3 | Meter data | yes (offline) | `meterdata.py:38,42,253`: `day` expects `PT1D`, `P1D` also accepted for `day` only; `test_day_accepts_both_daily_labels_with_identical_frames`, `test_a_daily_label_is_accepted_only_for_day`, `test_resolution_labels_must_match_exactly`, `test_a_non_text_resolution_is_an_eloverblik_error_not_a_type_error` (the `TypeError` regression is fixed); the resolution-mismatch check still raises naming the point. Runner: `day` 13 rows, 0 missing; `test_date_to_is_exclusive` one row, `resolution=PT1D`. Real-token confirmation of `day` is owed to the next live run |
+| A4 | Long periods, many points | yes | untouched; windows/batch tests green; runner: 730-day request accepted |
+| A5 | Charges | yes | unchanged; runner: 52 rows over tariff/subscription/fee |
+| A6 | Token | yes | unchanged; token tests green; the live-report scrubbing only widens redaction |
+| A7 | Errors | yes for the package, real 400 shape still unknown | unchanged code; the live test now reports the body line (defect 2). Offline: `invalid request body: content_type='application/json' keys=['errorCode', 'status', 'title', 'type']`. What the real API's 400 looks like is for the next live run to show |
+| A8 | Tests and live run | partially | Evidenced: plain `pytest` offline with no token; 17 live tests, skipped without a token, deselected by default; runner run once offline (`ELOVERBLIK_LIVE_MOCK=1`, dummy token): `17 passed in 0.37s` and a readable report, ids as `...0001`, no names, addresses or CPR/CVR; the runner is still outside git (`git ls-files` empty). **Not evidenced:** the real-token run, the user's second live run |
+| A9 | Docs | yes | README, `STRUCTURE.md`, `structure-eloverblik.md` (updated this step, below), `structure-utils.md`; `test_the_rules_file_*` green |
+
+Send-back defects:
+
+| # | Defect | Closed | Evidence |
+|---|---|---|---|
+| 1 | `day` label `PT1D` | yes offline | the mock emits `PT1D` for `Day` (`test_the_mock_labels_each_aggregation_as_the_real_api_does` x5); parser tests above; runner `day` and exclusive-`dateTo` lines. `month`/`year` labels `P1M`/`P1Y` unchanged and the runner's year line lists `resolutions=['P1Y']` |
+| 2 | 400 body unreported | yes (reporting) | `_body_shape` test group (`test_body_shape_*`, the whole body scrubbed before the 300-character cut); runner line `invalid request body: content_type=... keys=[...] excerpt=...`. The parser was deliberately not changed (the send-back forbids guessing the shape) |
+| 3 | Designed refusal treated as failure | yes | `test_the_aggregation_test_*` x7 (a `quarter` mismatch is recorded, any other fails), `test_the_quarter_refusal_is_the_designed_one`, `test_no_other_resolution_mismatch_is_a_designed_refusal` x3, `test_refusal_*`; `_refusal` states status, code, text and the scrubbed message and is used by the quarter, child-point and aggregation lines. Runner (mock): the child-point line reads `error status=200 code=20008 text=... message='Eloverblik API: ... failed for metering point ...0099 ...'`. The quarter refusal line itself cannot occur on the mock (it returns quarter data), so it is shown by the in-process tests only |
+| 4 | Year empty without a reason | yes | `test_the_year_probe_reports_a_tolerated_code_and_each_points_periods`; runner: per-point `year 2025-01-01 to 2026-01-01 ...0001: success=True errorCode=10000 errorText='OK' series=1 periods=1 resolutions=['P1Y']` before the summary line |
+
+Out of scope: nothing built in the send-back. Connections and surface: no public name added or removed; the auditor confirms the signatures. Showcases ran at step 4 on this code and the send-back commits since touched tests and `meterdata.py` internals only.
+
+Structure-auditor (re-run, no signature drift, `STRUCTURE.md` needs no edit; two prose gaps, both accurate and applied in `.claude/rules/structure-eloverblik.md`): (1) the `get_meter_data` rules now say the resolution label must be text matching exactly (`P1D` accepted for `day` only) and that the unit is compared stripped and case-insensitively; (2) the live-suite paragraph and the `spec` clause now describe the aggregation test's designed-refusal rule, the year probe's raw line and the in-process live tests.
+
+Drift: none. Verdict: all criteria met or evidenced offline; the work does not go back to step 3. A3's `day` and A7's real 400 shape, and A8's real-token run, are confirmed only by the user's second live run, after step 7.
 
 ---
 

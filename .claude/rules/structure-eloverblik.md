@@ -71,8 +71,8 @@ tolerated.
 exclusive, plus a day when `end` is not local midnight; `end=None` requests through tomorrow);
 `dateTo` is clamped to tomorrow and `dateFrom` to 1 January five years back, a part wholly
 outside is not requested and is NaN. Windows on Danish dates: 730 days for quarter/hour/day, 12
-months for month, one year for year, abutting. Per point a series must be kWh at the asked
-resolution (`PT15M`, `PT1H`, `PT1D` (`P1D` also accepted), `P1M`, `P1Y`) else `EloverblikError` naming the point; a
+months for month, one year for year, abutting. Per point a series must be kWh (unit compared stripped and case-insensitively) at the asked
+resolution, whose label must be text matching exactly (`PT15M`, `PT1H`, `PT1D` (`P1D` also accepted, for `day` only), `P1M`, `P1Y`), else `EloverblikError` naming the point; a
 null or absent quantity is NaN with the quality kept; per-point codes `30015`, `30018`, `30010`
 and `30016` give NaN for that window, any other raises. The clock is read only through
 `pd.Timestamp.now`. The interval holding today may be a partial sum.
@@ -98,7 +98,7 @@ the `eloverblik_service` fixture.
 
 `tests/test_eloverblik_live.py` is the live suite: every test marked `live`, skipped without
 `ELOVERBLIK_REFRESH_TOKEN`, deselected by plain `pytest`. One module-scoped client (one
-`/token` call); each test writes scrubbed lines to the file named by `ELOVERBLIK_LIVE_REPORT`.
+`/token` call); each test writes scrubbed lines to the file named by `ELOVERBLIK_LIVE_REPORT`. The aggregation test records a `quarter` resolution mismatch as the designed refusal and fails on any other; its `year` case also reports each linked point's raw `Year` result (`success`, `errorCode`, scrubbed `errorText`, series, periods, resolutions). Server text the package did not shape has every run of six or more digits redacted as well.
 `scrub(text, secrets=()) -> str` removes the secrets and any JWT and shortens every 18-digit
 number to `...` plus its last four digits. With `ELOVERBLIK_LIVE_MOCK=1` the same tests run
 offline against `EloverblikService` with every real transport refused. The offline suites
@@ -110,7 +110,7 @@ offline against `EloverblikService` with every real transport refused. The offli
 retries; `meteringpoints`/`charges`/`meterdata` each endpoint's columns, dtypes, nulls and
 payload errors (meter data also periods, the history horizon, windows and batches, DST days);
 `spec` the package against the OpenAPI fixture, the mock's bodies against its schemas, the live
-suite's offline subprocess run (nothing private in its output), `scrub`, the live suite's private report helpers (body shape, refusal line, which mismatch is the designed one: only `quarter`; digit runs of six or more redacted in raw server text) and the docs. Rules the
+suite's offline subprocess run (nothing private in its output), `scrub`, the live suite's private report helpers (body shape, refusal line, which mismatch is the designed one: only `quarter`; digit runs of six or more redacted in raw server text), the live tests themselves driven in-process against the mock (a non-`quarter` mismatch fails the aggregation test, a `quarter` one is recorded, the quarter probe's line per point, the year probe's raw line per point) and the docs. Rules the
 tests pin: ids are ASCII digits only; a point listed twice is used once; an error text that
 echoes a token (of six characters or more) has it replaced by `<token>`; a series must carry
 the id of the result it is in; a missing or unparseable `timeInterval.start`, or a position
