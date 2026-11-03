@@ -520,7 +520,7 @@ _ELO_TIME = "%Y-%m-%dT%H:%M:%SZ"
 _ELO_RESOLUTION = {
     "Quarter": "PT15M",
     "Hour": "PT1H",
-    "Day": "P1D",
+    "Day": "PT1D",  # what the real API labels daily periods
     "Month": "P1M",
     "Year": "P1Y",
 }

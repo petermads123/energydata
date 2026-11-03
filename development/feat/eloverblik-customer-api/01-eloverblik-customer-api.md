@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -487,6 +487,19 @@ written. Departures and decisions the plan left open:
   the `ELOVERBLIK LIVE REPORT` block, all ids shortened.
 - **`DEVELOPMENT.md`.** The `_gather_ordered` entry is deleted (resolved); the `__cause__`
   remark in it is kept as a shorter entry; the calendar-helper duplication note is added.
+
+**Send-back from step 8 (2026-11-03).** Defect 1: `meterdata.py` expects `PT1D` for `day` (the label
+the real API sends) and still accepts `P1D` (`_ALSO_ACCEPTED`); `EloverblikService` emits `PT1D` for
+`Day`; no existing offline test hard-coded `P1D`, so none changed. Defects 2-4, in
+`tests/test_eloverblik_live.py` only: `_body_shape` reports the 400 body's content type, top-level
+keys and a scrubbed excerpt (at most 300 characters) from the response chained on the error;
+`_refusal` states status, code, text and the scrubbed message (at most 200 characters) and is used by
+the quarter, child-point and aggregation lines; the aggregation test records the designed
+resolution-mismatch `EloverblikError` as a report line instead of failing; the `year` case reports
+each point's raw `success`/`errorCode`/`errorText`, series, periods and resolutions through
+`client.get_json`. Offline: 17 live tests pass with `ELOVERBLIK_LIVE_MOCK=1`;
+`test_the_offline_live_run_reports_every_probe` also expects the body line and the two year lines.
+Whole tree: ruff, format, mypy clean; `pytest` 3285 passed, 38 deselected, 2 known errors.
 
 ---
 

@@ -72,7 +72,7 @@ exclusive, plus a day when `end` is not local midnight; `end=None` requests thro
 `dateTo` is clamped to tomorrow and `dateFrom` to 1 January five years back, a part wholly
 outside is not requested and is NaN. Windows on Danish dates: 730 days for quarter/hour/day, 12
 months for month, one year for year, abutting. Per point a series must be kWh at the asked
-resolution (`PT15M`, `PT1H`, `P1D`, `P1M`, `P1Y`) else `EloverblikError` naming the point; a
+resolution (`PT15M`, `PT1H`, `PT1D` (`P1D` also accepted), `P1M`, `P1Y`) else `EloverblikError` naming the point; a
 null or absent quantity is NaN with the quality kept; per-point codes `30015`, `30018`, `30010`
 and `30016` give NaN for that window, any other raises. The clock is read only through
 `pd.Timestamp.now`. The interval holding today may be a partial sum.

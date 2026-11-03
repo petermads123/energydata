@@ -101,6 +101,50 @@ def _describe(error: EloverblikError | RetryError) -> str:
     return scrub(f"a request failed: {type(error).__name__}: {error}", _secrets())
 
 
+def _refusal(error: EloverblikError) -> str:
+    """A report line for an error: status, code, text and the message itself.
+
+    The message names the error's class for errors the package raises itself
+    (status, code and text are `None` then), e.g. `returned resolution 'PT1H' for
+    aggregation 'quarter'`. Scrubbed and cut to 200 characters.
+    """
+    message = scrub(str(error), _secrets())
+    if len(message) > 200:
+        message = message[:200] + "..."
+    return (
+        f"error status={error.status} code={error.error_code} "
+        f"text={error.error_text!r} message={message!r}"
+    )
+
+
+def _body_shape(error: EloverblikError) -> str:
+    """The content type, top-level keys and a scrubbed excerpt of an error body.
+
+    Read from the HTTP response chained on the error. The excerpt is at most 300
+    characters; ids and tokens are scrubbed.
+    """
+    cause = error.__cause__
+    response = getattr(cause, "response", None)
+    if response is None:
+        return "no HTTP response is attached to the error"
+    content_type = response.headers.get("Content-Type")
+    text = response.text
+    keys: object = "not a JSON object"
+    try:
+        parsed = response.json()
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        keys = sorted(str(key) for key in parsed)
+    excerpt = scrub(text[:300], _secrets())
+    return f"content_type={content_type!r} keys={keys} excerpt={excerpt!r}"
+
+
+def _is_resolution_refusal(error: EloverblikError) -> bool:
+    """Whether `error` is the designed refusal of a resolution that was not asked."""
+    return error.status is None and "returned resolution" in str(error)
+
+
 def _test_frame(
     entry: TracebackType | None, test: Callable[..., object]
 ) -> TracebackType | None:
@@ -287,8 +331,17 @@ def test_every_aggregation_on_a_recent_period(
     client: EloverblikClient, report: Report, aggregation: Aggregation
 ) -> None:
     start, end = _recent_period(aggregation)
+    if aggregation == "year":
+        _report_year_raw(client, report, start, end)
 
-    frame = get_meter_data(start, end, aggregation=aggregation, client=client)
+    try:
+        frame = get_meter_data(start, end, aggregation=aggregation, client=client)
+    except EloverblikError as error:
+        if not _is_resolution_refusal(error):
+            raise
+        # The designed refusal (A3): a point metered at another resolution.
+        report(f"{aggregation} {start} to {end}: refused, {_refusal(error)}")
+        return
 
     assert str(getattr(frame.index, "tz", None)) == TZ
     assert frame.columns.nlevels == 2
@@ -371,10 +424,7 @@ def test_quarter_on_each_point(client: EloverblikClient, report: Report) -> None
                 client=client,
             )
         except EloverblikError as error:
-            report(
-                f"{_short(str(point))} quarter: error status={error.status} "
-                f"code={error.error_code} text={error.error_text!r}"
-            )
+            report(f"{_short(str(point))} quarter: {_refusal(error)}")
         else:
             values = _count(_energy(frame).notna())
             report(f"{_short(str(point))} quarter: {len(frame)} rows, {values} values")
@@ -409,6 +459,7 @@ def test_error_body_of_an_invalid_request(
             f"invalid request: status={error.status} code={error.error_code} "
             f"text={error.error_text!r} correlation_id_present={bool(error.correlation_id)}"
         )
+        report(f"invalid request body: {_body_shape(error)}")
     else:
         report("invalid request: no error was raised")
 
@@ -433,13 +484,36 @@ def test_child_metering_points(client: EloverblikClient, report: Report) -> None
                 client=client,
             )
         except EloverblikError as error:
-            report(
-                f"child {_short(child)}: error status={error.status} "
-                f"code={error.error_code} text={error.error_text!r}"
-            )
+            report(f"child {_short(child)}: {_refusal(error)}")
         else:
             energy = _energy(frame).to_numpy()
             report(f"child {_short(child)}: {energy[0, 0]} kWh on {day}")
+
+
+def _report_year_raw(
+    client: EloverblikClient, report: Report, start: date, end: date
+) -> None:
+    """Report the raw per-point `success`/`errorCode` of a `Year` request, per point."""
+    for point in _linked(client)["metering_point_id"]:
+        body = {"meteringPoints": {"meteringPoint": [str(point)]}}
+        raw = client.get_json(
+            "POST", f"/meterdata/gettimeseries/{start}/{end}/Year", body=body
+        )
+        results = raw.get("result")
+        for item in results if isinstance(results, list) else []:
+            if not isinstance(item, dict):
+                continue
+            document = item.get("MyEnergyData_MarketDocument")
+            series = document.get("TimeSeries") if isinstance(document, dict) else None
+            periods = _raw_periods(results)
+            report(
+                f"year {start} to {end} {_short(str(point))}: "
+                f"success={item.get('success')} errorCode={item.get('errorCode')} "
+                f"errorText={item.get('errorText')!r} "
+                f"series={len(series) if isinstance(series, list) else 0} "
+                f"periods={len(periods)} "
+                f"resolutions={sorted({str(p.get('resolution')) for p in periods})}"
+            )
 
 
 @_safe_failures

@@ -35,10 +35,11 @@ _API_NAME = {
 _RESOLUTION = {
     "quarter": "PT15M",
     "hour": "PT1H",
-    "day": "P1D",
+    "day": "PT1D",  # the label the real API sends; ISO 8601 `P1D` is accepted too
     "month": "P1M",
     "year": "P1Y",
 }
+_ALSO_ACCEPTED = {"day": frozenset({"P1D"})}
 _OFFSETS = {
     "day": pd.DateOffset(days=1),
     "month": pd.DateOffset(months=1),
@@ -249,6 +250,7 @@ def _collect(
     if not isinstance(series_list, list):
         raise EloverblikError(f"{path}: 'TimeSeries' is not a list")
     expected = _RESOLUTION[aggregation]
+    accepted = _ALSO_ACCEPTED.get(aggregation, frozenset())
     for series in series_list:
         if not isinstance(series, dict):
             raise EloverblikError(f"{path}: a series is not a JSON object")
@@ -283,7 +285,7 @@ def _collect(
                 if not isinstance(period, dict):
                     raise EloverblikError(f"{label}: a period is not a JSON object")
                 got = period.get("resolution")
-                if got != expected:
+                if got != expected and got not in accepted:
                     raise EloverblikError(
                         f"{label} returned resolution {got!r} for aggregation "
                         f"{aggregation!r}, expected {expected!r}",

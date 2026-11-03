@@ -499,9 +499,17 @@ def test_the_offline_live_run_reports_every_probe(
         "invalid request: status=400 code=30001",
         "730 days: accepted",
         "child ...0099: error status=",
+        "invalid request body: content_type=",
+        "success=True errorCode=10000",
     ):
         assert line in report, line
-    assert report.count("[test_every_aggregation_on_a_recent_period") == 5
+    lines = [
+        line
+        for line in report.splitlines()
+        if line.startswith("[test_every_aggregation_on_a_recent_period")
+    ]
+    assert sum("errorCode=" not in line for line in lines) == 5
+    assert sum("errorCode=" in line for line in lines) == 2  # the year probe, per point
 
 
 def test_the_offline_live_run_never_reaches_a_real_transport(
