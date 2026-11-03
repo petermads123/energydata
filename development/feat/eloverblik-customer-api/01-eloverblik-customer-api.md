@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -701,6 +701,15 @@ Drift: none. Verdict: all criteria met or evidenced offline; the work does not g
 | Pushed to | `origin/feat/eloverblik-customer-api` |
 | Whole tree at ship | `ruff check .` clean; `ruff format --check .` 107 files already formatted; `mypy` no issues in 70 source files; `pytest` 3285 passed, 38 deselected, 2 errors (the pre-existing Windows-only `tests/test_readers.py` ones, also on `origin/main`, not this round's). `origin/main` had not moved (0 commits behind). |
 | Diff review | 31 files, +10114/-31. No scratch file, runner (`eloverblik_live_run.py`), token, real metering-point id, name or address in the diff; the only 18-digit ids are synthetic `5713131…` test ids and the only JWT-shaped string is a fake in a redaction test. The runner is in the session scratchpad only. A8's real-token run is still to do after the build. |
+
+### Re-run after the step-8 send-back (2026-11-03)
+
+| Field | Value |
+|---|---|
+| Commits since the earlier ship (`e1c29ff`) | `f3db492` Recommend: send the live run's defects back to the build; step 3: `915dfe1` accept PT1D for day, sharpen live-run reporting; step 4: `49870ea` Verify (re-run); step 5: `b83824d` send-back tests, resolution TypeError, live report scrubbing; step 6: `303a23b` Concept check (re-run); step 7: the `Ship:` commit that closes this re-run. Every step committed; none missing. |
+| Whole tree | `ruff check .` clean; `ruff format --check .` 107 files already formatted; `mypy` no issues in 70 source files; `pytest` 3366 passed, 38 deselected, 2 errors in 286.50s (the pre-existing Windows-only `tests/test_readers.py` ones, also on `origin/main`, excluded). `origin/main` (`d71e224`) is already an ancestor of the branch: nothing to bring in. |
+| Plan file | steps 1 to 6 done; section 6 re-run table has no unmet row (A3 `day` and A7's real 400 shape, A8's real-token run await the user's second live run, as recorded). |
+| Diff review | `e1c29ff..HEAD`: 7 files, +745/-21 (`meterdata.py`, `conftest.py`, three test files, `structure-eloverblik.md`, this plan). No runner (`git ls-files` finds no `eloverblik_live_run`), token, name, address, CPR or CVR. The only 18-digit string added is the synthetic `571313100000008261` redaction-test id, and the only JWT-shaped string a fake in a redaction test; the user's live report in section 6 carries only scrubbed ids (`...8261`, `...1743`). |
 
 ---
 
