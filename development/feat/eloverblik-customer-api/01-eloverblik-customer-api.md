@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=8 status=active -->
+<!-- claude-plan step=3 status=active -->
 
 | Field | Value |
 |---|---|
@@ -690,6 +690,45 @@ Out of scope: nothing built in the send-back. Connections and surface: no public
 Structure-auditor (re-run, no signature drift, `STRUCTURE.md` needs no edit; two prose gaps, both accurate and applied in `.claude/rules/structure-eloverblik.md`): (1) the `get_meter_data` rules now say the resolution label must be text matching exactly (`P1D` accepted for `day` only) and that the unit is compared stripped and case-insensitively; (2) the live-suite paragraph and the `spec` clause now describe the aggregation test's designed-refusal rule, the year probe's raw line and the in-process live tests.
 
 Drift: none. Verdict: all criteria met or evidenced offline; the work does not go back to step 3. A3's `day` and A7's real 400 shape, and A8's real-token run, are confirmed only by the user's second live run, after step 7.
+
+### Sent back from step 8 again: the second real-token live run (2026-11-03)
+
+The user ran the runner with their real token on the code as `0fc1d68` left it: **17 passed in
+27.38 s**. Report (ids scrubbed by the runner), quoted where it matters:
+
+```
+[quarter] 2026-10-30 to 2026-11-02: refused, error status=None code=None text=None message="...: point ...8261 returned resolution 'PT1H' for aggregation 'quarter', expected 'PT15M'"
+[hour] 72 rows, 72 values, 0 missing, 351.7 kWh     [day] 2026-10-20 to 2026-11-02: 13 rows, 13 values, 0 missing
+[month] 2026-08-01 to 2026-11-01: 3 rows, 3 values  [730 days] accepted
+[year] 2025 ...8261: success=False errorCode=30018 errorText='MeteringPointDataNotAvailableForTheRequestedPeriod' series=0 periods=0 resolutions=[]
+[year] 2025: 1 rows, 0 values, 1 missing
+[test_autumn_dst_day_hourly] 2026-10-25: 25 hourly rows, 0 missing
+[test_date_to_is_exclusive] a one-day day request gives 1 row; raw resolution=PT1D timeInterval 2026-10-28T23:00:00Z to 2026-10-29T23:00:00Z
+[test_quality_codes_seen] ['A04']                   [test_child_metering_points] child ...1743: 0.0 kWh on 2026-10-29
+[test_charges] 29 rows: tariff 27, subscription 2
+[test_error_body_of_an_invalid_request] invalid request: status=400 code=None text=None correlation_id_present=True
+[test_error_body_of_an_invalid_request] body: content_type='application/json; charset=utf-8' keys=not a JSON object excerpt='"#30001: Period not allowed, ToDate is before FromDate."'
+```
+
+Now evidenced live: A3 `day` (`PT1D` accepted, 13 rows), `dateTo` exclusive, Danish calendar
+days (period starts 23:00Z), quality `A04`, `quarter` on an hourly point refused as designed,
+year 2025 is the tolerated `30018` (data not available) shown as one NaN row, the child point,
+charges, 730-day requests, and A8's real-token run.
+
+Defect in this round's code, for steps 3 to 7:
+
+1. **A7 unmet against the real API — a 400's error code and text are dropped.** The real error
+   body is a bare JSON **string**, `"#30001: Period not allowed, ToDate is before FromDate."`,
+   not an object. `_api_error` (`client.py:332`) reads code and text only from a JSON object, so
+   the raised `EloverblikError` has `error_code=None`, `error_text=None` and the message carries
+   no reason. A7 promises "Eloverblik's error code and text". Reproduction: a mock 400 response
+   with body `"#30001: Period not allowed, ToDate is before FromDate."` and content type
+   `application/json; charset=utf-8` gives `error_code is None`. Expected: `error_code == 30001`,
+   `error_text == "Period not allowed, ToDate is before FromDate."`, both in the message,
+   tokens still redacted. Keep the existing object shapes (`errorCode`/`errorText`, `detail`,
+   `title`) working; a string body not of the `#<digits>: <text>` form becomes the text with no
+   code. Make the mock's 400 for an invalid period use the real shape, and update the live
+   test's expectations (it should now report `code=30001` and the text).
 
 ---
 

@@ -66,11 +66,6 @@ by heading is updated in the same change.
 
 ## `feat/eloverblik-customer-api` round 1 (2026-11-02)
 
-- **Eloverblik date semantics are assumed, not observed.** Built from the published spec
-  without a token: `dateTo` taken as exclusive, both dates as Danish calendar days, quality
-  codes as CIM `A01`–`A05`, and `Quarter` on an hourly-metered point unknown (the resolution
-  check refuses a mismatch either way). The live run at the end of the round checks each;
-  delete this entry once it has.
 - **Calendar helpers are duplicated across `minstroem/_series.py` and `eloverblik/meterdata.py`.**
   Period alignment, the Copenhagen-calendar interval index and the calendar window split exist
   twice (private, near-identical). Promote them to `utils` and migrate `minstroem` in a
