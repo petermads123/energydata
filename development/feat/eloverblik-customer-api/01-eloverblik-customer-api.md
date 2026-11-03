@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=8 status=active -->
+<!-- claude-plan step=3 status=active -->
 
 | Field | Value |
 |---|---|
@@ -570,6 +570,52 @@ Drift found, and what was done about it: none in the code. Structure-auditor (4 
 
 | Round | # | Criterion | Still met | Evidence |
 |---|---|---|---|---|
+
+
+### Sent back from step 8: the first real-token live run (2026-11-03)
+
+The user ran the temporary runner with their real token: 14 passed, 3 failed, 26 s. Report
+(ids scrubbed by the runner), quoted where it matters:
+
+```
+test_every_aggregation_on_a_recent_period[quarter] FAILED: point ...8261 returned resolution 'PT1H' for aggregation 'quarter', expected 'PT15M'
+test_every_aggregation_on_a_recent_period[day] FAILED: /meterdata/gettimeseries/2026-10-20/2026-11-02/Day: point ...8261 returned resolution 'PT1D' for aggregation 'day', expected 'P1D'
+test_date_to_is_exclusive FAILED: same 'PT1D' error on /2026-10-29/2026-10-30/Day
+[hour] 72 rows, 72 values, 0 missing    [month] 2026-08..11: 3 rows, 3 values
+[year] 2025-01-01 to 2026-01-01: 1 rows, 0 values, 1 missing
+[test_autumn_dst_day_hourly] 2026-10-25: 25 hourly rows, 0 missing
+[test_quality_codes_seen] ['A04']        [test_730_day_request] accepted
+[test_quarter_on_each_point] ...8261 quarter: error status=None code=None text=None
+[test_child_metering_points] child ...1743: error status=None code=None text=None
+[test_error_body_of_an_invalid_request] invalid request: status=400 code=None text=None correlation_id_present=True
+```
+
+Defects in this round's code, for steps 3 to 7:
+
+1. **A3 unmet — `day` aggregation fails for every point.** The API labels daily periods
+   `PT1D`, not `P1D`. Accept `PT1D` (and keep `P1D`) as the `day` resolution, in the parser,
+   the mock (which must now emit `PT1D` like the real API) and the tests. Re-check that the
+   `month`/`year` labels the real API sends are the ones the parser expects (`P1M`/`P1Y`
+   passed live: month had values, year raised nothing).
+2. **A7 unconfirmed — the real 400 body yields neither code nor text.** `_api_error` found no
+   `errorCode`, `errorText`, `detail` or `title`. The shape is unknown; do not guess it into
+   the parser. Make the live test `test_error_body_of_an_invalid_request` report the scrubbed
+   body's content type, top-level keys and a scrubbed excerpt (≤ 300 characters), so the
+   next live run shows it.
+3. **Live suite treats designed refusals as failures.** `quarter` on an hourly-metered
+   point raising the resolution-mismatch `EloverblikError` is A3's agreed behaviour; the
+   aggregation test must record it as a report line (as `test_quarter_on_each_point` does),
+   not fail. Those two report lines and the child-point line must state the error's message
+   class (e.g. `resolution PT1H for quarter`), not only status/code/text, which are `None`
+   for errors the package raises itself.
+4. **Year 2025 came back empty without saying why.** Make the year test report, per point
+   and window, the raw per-point `success`/`errorCode` the API returned (through the
+   client's `get_json`, ids scrubbed), so the next run shows whether it was a tolerated code
+   (e.g. `30018`, data before the point's registration) or an empty series.
+
+`test_date_to_is_exclusive` and the child-point probe were blocked by defect 1 and are
+re-checked by the next live run. Everything else live matched the stated assumptions:
+quality `A04`, 25 rows on the autumn DST day, 730-day requests accepted.
 
 ---
 
