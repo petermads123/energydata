@@ -1098,3 +1098,180 @@ def test_a_period_returned_wholly_outside_the_request_is_dropped() -> None:
 
     assert len(frame) == 24
     assert frame[(A, "energy_kwh")].isna().sum() >= 1
+
+
+# --- the resolution label (the step-8 send-back) -------------------------------------------
+
+_WINDOWS = {
+    "quarter": ("2026-10-01", "2026-10-02"),
+    "hour": ("2026-10-01", "2026-10-02"),
+    "day": ("2026-10-01", "2026-10-04"),
+    "month": ("2026-08-01", "2026-10-01"),
+    "year": ("2025-01-01", "2026-01-01"),
+}
+_LABELS = {
+    "quarter": "PT15M",
+    "hour": "PT1H",
+    "day": "PT1D",
+    "month": "P1M",
+    "year": "P1Y",
+}
+
+
+@pytest.mark.parametrize("aggregation", AGGREGATIONS)
+def test_the_mock_labels_each_aggregation_as_the_real_api_does(
+    aggregation: str,
+) -> None:
+    """The mock departs from the spec's `P1D (Day)` on purpose: the live API sends `PT1D`."""
+    service = EloverblikService([eloverblik_point(A)])
+    start, end = _WINDOWS[aggregation]
+
+    with service.client() as client:
+        raw = client.get_json(
+            "POST",
+            f"/meterdata/gettimeseries/{start}/{end}/{aggregation.capitalize()}",
+            body={"meteringPoints": {"meteringPoint": [A]}},
+        )
+
+    results: Any = raw["result"]  # the mock's shape
+    labels = {
+        period["resolution"]
+        for result in results
+        for series in result["MyEnergyData_MarketDocument"]["TimeSeries"]
+        for period in series["Period"]
+    }
+    assert labels == {_LABELS[aggregation]}
+
+
+@pytest.mark.parametrize("label", ["PT1D", "P1D"])
+def test_day_accepts_both_daily_labels_with_identical_frames(label: str) -> None:
+    plain = _get(
+        EloverblikService([eloverblik_point(A)]), "2026-10-01", "2026-10-04", "day"
+    )
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label
+
+    frame = _get(service, "2026-10-01", "2026-10-04", "day", A)
+
+    assert len(frame) == 3
+    assert frame[(A, "energy_kwh")].notna().all()
+    pd.testing.assert_frame_equal(frame, plain)
+
+
+def test_an_open_day_period_accepts_p1d() -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = "P1D"
+
+    frame = _get(service, "2026-11-02", None, "day", A)
+
+    assert list(frame.index) == [pd.Timestamp("2026-11-02", tz=CPH)]
+
+
+@pytest.mark.parametrize("aggregation", ["quarter", "hour", "month", "year"])
+@pytest.mark.parametrize("label", ["PT1D", "P1D"])
+def test_a_daily_label_is_accepted_only_for_day(aggregation: str, label: str) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label
+    start, end = _WINDOWS[aggregation]
+
+    with pytest.raises(EloverblikError) as caught:
+        _get(service, start, end, aggregation, A)
+
+    assert caught.value.metering_point_id == A
+    assert f"{label!r}" in str(caught.value)
+    assert f"{_LABELS[aggregation]!r}" in str(caught.value)
+
+
+@pytest.mark.parametrize("label", ["PT1H", "P1M", "PT15M", "P1Y", "PT24H", "P3D"])
+def test_day_refuses_every_other_label_and_names_both_accepted_ones(
+    label: str,
+) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label
+
+    with pytest.raises(EloverblikError) as caught:
+        _get(service, "2026-10-01", "2026-10-03", "day", A)
+
+    message = str(caught.value)
+    assert caught.value.metering_point_id == A
+    assert f"{label!r}" in message
+    assert "'PT1D'" in message
+    assert "'P1D'" in message
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "label"),
+    [
+        ("day", "pt1d"),
+        ("day", "p1d"),
+        ("day", " PT1D"),
+        ("day", "P1D "),
+        ("day", "PT1D\n"),
+        ("hour", "pt1h"),
+        ("hour", " PT1H "),
+    ],
+)
+def test_resolution_labels_must_match_exactly(aggregation: str, label: str) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label
+    start, end = _WINDOWS[aggregation]
+
+    with pytest.raises(EloverblikError):
+        _get(service, start, end, aggregation, A)
+
+
+@pytest.mark.parametrize("aggregation", ["day", "hour"])
+@pytest.mark.parametrize("label", [["PT1D"], {}, {"a": 1}, 5, True])
+def test_a_non_text_resolution_is_an_eloverblik_error_not_a_type_error(
+    aggregation: str, label: object
+) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    _corrupt(service, lambda r: _period(r).update(resolution=label))
+    start, end = _WINDOWS[aggregation]
+
+    with pytest.raises(EloverblikError) as caught:
+        _get(service, start, end, aggregation, A)
+
+    assert caught.value.metering_point_id == A
+
+
+@pytest.mark.parametrize("change", ["missing", None, ""])
+def test_a_missing_null_or_empty_resolution_raises(change: str | None) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+
+    def apply(result: dict[str, Any]) -> None:
+        if change == "missing":
+            _period(result).pop("resolution")
+        else:
+            _period(result).update(resolution=change)
+
+    _corrupt(service, apply)
+
+    with pytest.raises(EloverblikError) as caught:
+        _get(service, "2026-10-01", "2026-10-03", "day", A)
+
+    assert caught.value.metering_point_id == A
+    assert "returned resolution" in str(caught.value)
+
+
+def test_points_in_one_batch_may_use_different_daily_labels() -> None:
+    service = _two()
+    service.resolution_override[A] = "P1D"
+
+    frame = _get(service, "2026-10-01", "2026-10-03", "day", [A, B])
+
+    assert frame.xs("energy_kwh", axis=1, level="field").notna().all().all()
+
+
+def test_a_day_refusal_in_a_batch_names_the_offending_point() -> None:
+    service = _two()
+    service.resolution_override[B] = "PT1H"
+
+    with pytest.raises(EloverblikError) as caught:
+        _get(service, "2026-10-01", "2026-10-03", "day", [A, B])
+
+    assert caught.value.metering_point_id == B
+    assert B in str(caught.value)
+    assert A not in str(caught.value)
+    assert caught.value.status is None
+    assert caught.value.correlation_id

@@ -78,6 +78,19 @@ def scrub(text: str, secrets: Sequence[str] = ()) -> str:
     return _LONG_NUMBER.sub(lambda m: f"...{m.group(1)[-4:]}", text)
 
 
+_DIGIT_RUN = re.compile(r"\d{6,}")
+
+
+def _scrub_raw(text: str) -> str:
+    """`scrub`, then every run of six or more digits redacted.
+
+    For server text the package did not shape (an error body, an `errorText`): it
+    may carry a CVR or the digits of a CPR. Ids are already shortened to `...` plus
+    four digits by then, which this leaves alone.
+    """
+    return _DIGIT_RUN.sub("<digits>", scrub(text, _secrets()))
+
+
 def _secrets() -> list[str]:
     return [os.environ.get(REFRESH_TOKEN_ENV, "").strip()]
 
@@ -108,20 +121,24 @@ def _refusal(error: EloverblikError) -> str:
     (status, code and text are `None` then), e.g. `returned resolution 'PT1H' for
     aggregation 'quarter'`. Scrubbed and cut to 200 characters.
     """
-    message = scrub(str(error), _secrets())
+    message = _scrub_raw(str(error))
     if len(message) > 200:
         message = message[:200] + "..."
+    text = _scrub_raw(error.error_text) if error.error_text is not None else None
+    if text is not None and len(text) > 200:
+        text = text[:200] + "..."
     return (
         f"error status={error.status} code={error.error_code} "
-        f"text={error.error_text!r} message={message!r}"
+        f"text={text!r} message={message!r}"
     )
 
 
 def _body_shape(error: EloverblikError) -> str:
     """The content type, top-level keys and a scrubbed excerpt of an error body.
 
-    Read from the HTTP response chained on the error. The excerpt is at most 300
-    characters; ids and tokens are scrubbed.
+    Read from the HTTP response chained on the error. The whole body is scrubbed
+    (tokens, ids, any run of six or more digits) before the excerpt of at most 300
+    characters is cut from it.
     """
     cause = error.__cause__
     response = getattr(cause, "response", None)
@@ -136,13 +153,24 @@ def _body_shape(error: EloverblikError) -> str:
         parsed = None
     if isinstance(parsed, dict):
         keys = sorted(str(key) for key in parsed)
-    excerpt = scrub(text[:300], _secrets())
+    excerpt = _scrub_raw(text)[:300]
+    keys = _scrub_raw(str(keys))
     return f"content_type={content_type!r} keys={keys} excerpt={excerpt!r}"
 
 
+_QUARTER_REFUSAL = re.compile(
+    r"returned resolution '[^']+' for aggregation 'quarter', expected"
+)
+
+
 def _is_resolution_refusal(error: EloverblikError) -> bool:
-    """Whether `error` is the designed refusal of a resolution that was not asked."""
-    return error.status is None and "returned resolution" in str(error)
+    """Whether `error` is the designed refusal of `quarter` on a coarser point.
+
+    Only that one is designed (A3): the package names the point, the label it got
+    (a real text, not a missing one) and the aggregation `quarter`. Any other
+    resolution mismatch is a defect and must fail the live test.
+    """
+    return error.status is None and _QUARTER_REFUSAL.search(str(error)) is not None
 
 
 def _test_frame(
@@ -505,11 +533,11 @@ def _report_year_raw(
                 continue
             document = item.get("MyEnergyData_MarketDocument")
             series = document.get("TimeSeries") if isinstance(document, dict) else None
-            periods = _raw_periods(results)
+            periods = _raw_periods([item])
             report(
                 f"year {start} to {end} {_short(str(point))}: "
                 f"success={item.get('success')} errorCode={item.get('errorCode')} "
-                f"errorText={item.get('errorText')!r} "
+                f"errorText={_scrub_raw(str(item.get('errorText')))!r} "
                 f"series={len(series) if isinstance(series, list) else 0} "
                 f"periods={len(periods)} "
                 f"resolutions={sorted({str(p.get('resolution')) for p in periods})}"

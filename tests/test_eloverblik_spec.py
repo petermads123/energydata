@@ -6,19 +6,29 @@ import re
 import subprocess
 import sys
 from collections.abc import Mapping
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import httpx
 import pandas as pd
 import pytest
+import test_eloverblik_live as live_suite
 from conftest import (
     ELOVERBLIK_POINT_A,
     ELOVERBLIK_POINT_B,
     EloverblikService,
     eloverblik_point,
 )
-from test_eloverblik_live import scrub
+from test_eloverblik_live import (
+    _body_shape,
+    _is_resolution_refusal,
+    _refusal,
+    _report_year_raw,
+    _scrub_raw,
+    scrub,
+)
 
 import energydata.eloverblik as package
 from energydata.eloverblik import (
@@ -654,3 +664,303 @@ def test_the_package_exposes_no_name_the_docs_do_not_mention() -> None:
 
     for name in public:
         assert name in rules, name
+
+
+# --- the live suite's helpers (the step-8 send-back) ------------------------------------------------
+
+A, B = ELOVERBLIK_POINT_A, ELOVERBLIK_POINT_B
+TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlc2lnbmF0dXJl"
+DIGITS = re.compile(r"\d{6,}")
+
+
+@pytest.fixture
+def pinned_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Today is 2026-11-02 12:00 Copenhagen for the package, the mock and the suite."""
+    now = pd.Timestamp("2026-11-02 12:00", tz="Europe/Copenhagen")
+
+    def fixed(_cls: type, tz: str | None = None) -> pd.Timestamp:
+        return now if tz is None else now.tz_convert(tz)
+
+    monkeypatch.setattr(pd.Timestamp, "now", classmethod(fixed))
+
+
+def _error_with_body(
+    body: str, *, content_type: str | None = None, status: int = 400
+) -> EloverblikError:
+    """An `EloverblikError` chained on an HTTP error whose response holds `body`."""
+    headers = {"Content-Type": content_type} if content_type else {}
+    request = httpx.Request("POST", "https://example.invalid/x")
+    response = httpx.Response(
+        status, content=body.encode(), headers=headers, request=request
+    )
+    error = EloverblikError("bad", status=status)
+    error.__cause__ = httpx.HTTPStatusError("bad", request=request, response=response)
+    return error
+
+
+def _mismatch(aggregation: str, label: object) -> EloverblikError:
+    """The error `get_meter_data` raises when the mock answers with `label`."""
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label  # type: ignore[assignment]  # None is a payload case
+    end = {"quarter": "2026-10-02", "hour": "2026-10-02", "day": "2026-10-03"}[
+        aggregation
+    ]
+    with service.client() as client_, pytest.raises(EloverblikError) as caught:
+        get_meter_data(
+            "2026-10-01",
+            end,
+            aggregation=aggregation,  # type: ignore[arg-type]  # parametrised text
+            metering_point_ids=A,
+            client=client_,
+        )
+    return caught.value
+
+
+def test_body_shape_never_leaks_a_token_cut_by_the_300_character_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(REFRESH_TOKEN_ENV, TOKEN)
+    error = _error_with_body("x" * 270 + TOKEN)
+
+    shape = _body_shape(error)
+
+    assert TOKEN[:20] not in shape
+    assert "eyJhbGciOiJIUzI1NiJ9" not in shape
+
+
+def test_body_shape_never_leaks_a_digit_run_cut_by_the_300_character_limit() -> None:
+    error = _error_with_body("x" * 290 + A)
+
+    shape = _body_shape(error)
+
+    assert A[:10] not in shape
+    assert not DIGITS.search(shape)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    ["12345678", "010203-1234", "571313100000008261", "123456", "1234567890123"],
+)
+def test_body_shape_redacts_cvr_cpr_and_long_digit_runs(secret: str) -> None:
+    error = _error_with_body(f'{{"detail": "owner {secret} unknown"}}')
+
+    shape = _body_shape(error)
+
+    assert not DIGITS.search(shape)
+    assert "<digits>" in shape or "...8261" in shape
+
+
+def test_body_shape_keeps_short_numbers_and_shortened_ids_readable() -> None:
+    error = _error_with_body(f'{{"status": 400, "id": "{A}"}}')
+
+    shape = _body_shape(error)
+
+    assert "400" in shape
+    assert f"...{A[-4:]}" in shape
+
+
+def test_body_shape_reports_type_keys_and_excerpt_of_a_problem_details_body() -> None:
+    body = f'{{"type": "x", "status": 400, "point": "{A}"}}'
+    error = _error_with_body(body, content_type="application/problem+json")
+
+    shape = _body_shape(error)
+
+    assert "content_type='application/problem+json'" in shape
+    assert "keys=['point', 'status', 'type']" in shape
+    assert f"...{A[-4:]}" in shape
+
+
+@pytest.mark.parametrize("body", ["Bad Request", "[1]", ""])
+def test_body_shape_says_so_when_the_body_is_not_a_json_object(body: str) -> None:
+    shape = _body_shape(_error_with_body(body))
+
+    assert "keys=not a JSON object" in shape
+    assert "content_type=None" in shape
+
+
+def test_body_shape_caps_the_excerpt_at_300_characters() -> None:
+    shape = _body_shape(_error_with_body("y" * 1000))
+
+    assert "y" * 300 in shape
+    assert "y" * 301 not in shape
+
+
+@pytest.mark.parametrize("cause", [None, ValueError("x")])
+def test_body_shape_without_a_chained_response_says_so(
+    cause: Exception | None,
+) -> None:
+    error = EloverblikError("payload")
+    error.__cause__ = cause
+
+    assert _body_shape(error) == "no HTTP response is attached to the error"
+
+
+def test_refusal_scrubs_and_caps_the_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(REFRESH_TOKEN_ENV, "SECRET-refresh-xyz")
+
+    line = _refusal(EloverblikError(f"point {A} SECRET-refresh-xyz " + "y" * 300))
+
+    assert f"...{A[-4:]}" in line
+    assert "<token>" in line
+    assert A not in line
+    assert "SECRET-refresh-xyz" not in line
+    assert "y" * 200 not in line
+
+
+def test_refusal_scrubs_the_error_text_and_redacts_digit_runs() -> None:
+    error = EloverblikError(
+        "m",
+        status=200,
+        error_code=30001,
+        error_text=f"point {A} owner 12345678 " + "z" * 300,
+    )
+
+    line = _refusal(error)
+
+    assert A not in line
+    assert not DIGITS.search(line)
+    assert "z" * 201 not in line
+    assert "status=200 code=30001" in line
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_refusal_reports_the_package_raised_message_when_status_is_none() -> None:
+    line = _refusal(_mismatch("quarter", "PT1H"))
+
+    assert "error status=None code=None text=None message=" in line
+    assert "returned resolution 'PT1H' for aggregation 'quarter'" in line
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_quarter_refusal_is_the_designed_one() -> None:
+    assert _is_resolution_refusal(_mismatch("quarter", "PT1H")) is True
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "label"), [("day", "PT1H"), ("day", "P1M"), ("hour", "PT15M")]
+)
+@pytest.mark.usefixtures("pinned_clock")
+def test_no_other_resolution_mismatch_is_a_designed_refusal(
+    aggregation: str, label: str
+) -> None:
+    assert _is_resolution_refusal(_mismatch(aggregation, label)) is False
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_a_period_with_no_resolution_is_not_a_designed_refusal() -> None:
+    assert _is_resolution_refusal(_mismatch("quarter", None)) is False
+
+
+def test_only_a_package_raised_mismatch_is_a_designed_refusal() -> None:
+    text = (
+        "point x returned resolution 'PT1H' for aggregation 'quarter', expected 'PT15M'"
+    )
+
+    assert not _is_resolution_refusal(
+        EloverblikError(text, status=200, error_code=30001)
+    )
+    assert not _is_resolution_refusal(EloverblikError(text, status=400))
+    assert not _is_resolution_refusal(
+        EloverblikError("point x reports unit 'MWH', expected KWH")
+    )
+    assert _is_resolution_refusal(EloverblikError(text))
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "label"),
+    [("day", "P1M"), ("hour", "PT15M"), ("month", "P1Y"), ("year", "P1M")],
+)
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_aggregation_test_fails_on_a_mismatch_other_than_quarter(
+    aggregation: str, label: str
+) -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = label
+    lines: list[str] = []
+
+    with service.client(service.refresh_token) as live, pytest.raises(AssertionError):
+        live_suite.test_every_aggregation_on_a_recent_period(
+            live,
+            lines.append,
+            aggregation,  # type: ignore[arg-type]  # parametrised text
+        )
+
+    assert not any("refused" in line for line in lines)
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_aggregation_test_records_quarter_on_an_hourly_point() -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = "PT1H"
+    lines: list[str] = []
+
+    with service.client(service.refresh_token) as live:
+        live_suite.test_every_aggregation_on_a_recent_period(
+            live, lines.append, "quarter"
+        )
+
+    assert len(lines) == 1
+    assert "refused, error status=None code=None text=None message=" in lines[0]
+    assert "returned resolution 'PT1H' for aggregation 'quarter'" in lines[0]
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_aggregation_test_failure_is_scrubbed_and_records_nothing() -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.codes[A] = {None: 30001}
+    lines: list[str] = []
+
+    with (
+        service.client(service.refresh_token) as live,
+        pytest.raises(AssertionError) as caught,
+    ):
+        live_suite.test_every_aggregation_on_a_recent_period(live, lines.append, "hour")
+
+    assert A not in str(caught.value)
+    assert lines == []
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_quarter_probe_records_a_mismatch_per_point() -> None:
+    service = EloverblikService([eloverblik_point(A)])
+    service.resolution_override[A] = "PT1H"
+    lines: list[str] = []
+
+    with service.client(service.refresh_token) as live:
+        live_suite.test_quarter_on_each_point(live, lines.append)
+
+    assert len(lines) == 1
+    assert lines[0].startswith(f"...{A[-4:]} quarter: error status=None")
+
+
+@pytest.mark.usefixtures("pinned_clock")
+def test_the_year_probe_reports_a_tolerated_code_and_each_points_periods() -> None:
+    service = EloverblikService([eloverblik_point(A), eloverblik_point(B)])
+    service.codes[A] = {None: 30018}
+    lines: list[str] = []
+
+    with service.client(service.refresh_token) as live:
+        _report_year_raw(live, lines.append, date(2025, 1, 1), date(2026, 1, 1))
+
+    assert len(lines) == 2
+    first = next(line for line in lines if f"...{A[-4:]}" in line)
+    second = next(line for line in lines if f"...{B[-4:]}" in line)
+    assert "success=False errorCode=30018" in first
+    assert "series=0 periods=0" in first
+    assert "resolutions=['P1Y']" in second
+    assert "periods=1" in second
+    assert not any(re.search(r"\d{18}", line) for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("CVR 12345678 x", "CVR <digits> x"),
+        ("010203-1234", "<digits>-1234"),
+        ("12345 stays", "12345 stays"),
+        ("id 571313100000008261", "id ...8261"),
+        ("2026-10-01 stays", "2026-10-01 stays"),
+    ],
+)
+def test_scrub_raw_redacts_runs_of_six_or_more_digits(text: str, expected: str) -> None:
+    assert _scrub_raw(text) == expected

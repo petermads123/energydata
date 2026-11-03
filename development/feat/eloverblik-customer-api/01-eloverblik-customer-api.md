@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -554,7 +554,7 @@ Reader reports merged: `input-space` and `contract` (both saved verbatim in the 
 | T12 | `test_scrub_*` (spec file). The runner itself (outside the repo) is run by step 6 | pass |
 | T13 | `test_the_readme_names_*`, `test_structure_md_*`, `test_the_rules_file_*`, `test_the_utils_rules_file_*` | pass |
 
-Whole tree after the halt was answered: `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest`: 3285 passed, 38 deselected, 2 errors. The 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones (section 4), excluded: not this round's.
+Whole tree after the halt was answered (and after the send-back re-run: `pytest` 3366 passed, 38 deselected, 2 known errors; ruff, format, mypy clean; live suite 17 passed offline with `ELOVERBLIK_LIVE_MOCK=1`): `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest`: 3285 passed, 38 deselected, 2 errors. The 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones (section 4), excluded: not this round's.
 
 **Bugs the tests found, fixed in code:** (1) ids accepted non-ASCII digits (`\d` -> `[0-9]`); (2) a point listed twice by the account multiplied rows (linked ids de-duplicated); (3) a server error text echoing a token leaked into the message and `error_text` (tokens of 6+ characters replaced by `<token>`); (4) an empty/`NaT`/out-of-range `timeInterval.start` silently dropped data (now `EloverblikError`); (5) a huge `position` leaked a raw pandas overflow (now `EloverblikError`); (6) parse errors in `_collect` did not carry `metering_point_id` (now set); (7) a result carrying another requested point's series was accepted (mRID must equal the result's id); (8) tariff rows were in API order (now by position, API order for ties); (9) a null tariff `position` (nullable in the spec) raised (now `<NA>`, sorted last); (10) a charge date beyond the ns range leaked a raw pandas error (now `EloverblikError`); (11) `bytes` as ids named the first byte (now refused by name); (12) `get_meter_data` docstring overstated `MissingTokenError`. Decisions on the record: (7) and (9) read section 2's column contract and the spec; `9999-12-31` charge dates raise a clean `EloverblikError` rather than becoming NaT (the live run shows whether the API sends them).
 
@@ -568,6 +568,22 @@ Reader cases not written, with reasons: `_unpack` string-coded `errorCode` is pi
 | A7 correlation id | `test_a_per_point_meter_data_error_*`, `test_a_per_point_details_error_*`, `test_a_per_point_charges_error_*`, `test_a_payload_error_while_parsing_a_point_*`, `test_the_correlation_id_is_that_of_the_batch_that_failed` (`test_eloverblik_common.py`): the id equals the mock's header for that response; with 12 points, the id of the failing second batch | pass |
 
 Edge cases considered and deliberately skipped: a real transport reaching the network (the autouse guard and the live-mock subprocess run cover it); the live runner script (outside the repo, step 6 runs it).
+
+### Re-run after the step-8 send-back (2026-11-03, code as `915dfe1` left it)
+
+Reader reports merged: `input-space` and `contract`, scoped to the send-back's changes (saved verbatim in the session scratchpad as `td_sendback_input_space.md` and `td_sendback_contract.md`). The original log above is kept.
+
+| Intent | Tests (file) | Result |
+|---|---|---|
+| Defect 1, `day` label | `test_the_mock_labels_each_aggregation_as_the_real_api_does` x5, `test_day_accepts_both_daily_labels_with_identical_frames` x2, `test_an_open_day_period_accepts_p1d`, `test_a_daily_label_is_accepted_only_for_day` x8, `test_day_refuses_every_other_label_and_names_both_accepted_ones` x6, `test_resolution_labels_must_match_exactly` x7, `test_points_in_one_batch_may_use_different_daily_labels`, `test_a_day_refusal_in_a_batch_names_the_offending_point` (`test_eloverblik_meterdata.py`) | pass |
+| A3 malformed resolution | `test_a_non_text_resolution_is_an_eloverblik_error_not_a_type_error` x10, `test_a_missing_null_or_empty_resolution_raises` x3 (same) | pass after the fix |
+| Defect 2, 400 body line | `test_body_shape_*` (token / id cut by the 300 limit, CVR / CPR / digit runs, shortened ids kept, keys and content type, non-object bodies, 300 cap, no chained response) (`test_eloverblik_spec.py`) | pass after the fix |
+| Defect 3, designed refusal | `test_refusal_*` x3, `test_the_quarter_refusal_is_the_designed_one`, `test_no_other_resolution_mismatch_is_a_designed_refusal` x3, `test_a_period_with_no_resolution_is_not_a_designed_refusal`, `test_only_a_package_raised_mismatch_is_a_designed_refusal`, `test_the_aggregation_test_*` x7, `test_the_quarter_probe_records_a_mismatch_per_point` (same) | pass after the fix |
+| Defect 4, year probe | `test_the_year_probe_reports_a_tolerated_code_and_each_points_periods`, `test_scrub_raw_redacts_runs_of_six_or_more_digits` x5 (same) | pass after the fix |
+
+**Bugs the tests found, fixed in code:** (1) `meterdata.py`: a non-text `resolution` (list, dict, number) escaped as `TypeError: unhashable type` from `got not in accepted`, a regression of `915dfe1`; now `not isinstance(got, str)` is refused with the `EloverblikError` naming the point. (2) `_body_shape` cut at 300 characters before scrubbing, so a token, JWT or id spanning the cut came through partly; the whole body is now scrubbed first and the excerpt cut after. (3) `_is_resolution_refusal` accepted any mismatch for any aggregation and a missing resolution, so a repeat of defect 1 would have been recorded as a refusal; it now matches only `returned resolution '<label>' for aggregation 'quarter'` with `status is None` (section 6 defect 3 designs only `quarter`), and every other mismatch fails the live test. (4) `_refusal` did not scrub or cap `error_text`; it does now. (5) `_report_year_raw` counted periods from the first result for every item; it counts the item's own. Also: new `_scrub_raw` redacts any run of six or more digits (after ids were shortened) in the raw server-text channels (400 body excerpt and keys, `_refusal` message and text, year probe `errorText`), conservative cover for CVR and CPR digits (A8). The day refusal message now names both accepted labels (`expected 'PT1D' or 'P1D'`).
+
+Decisions on the record: contradiction "strictness differs from the unit check" (labels are exact, the unit is stripped and upper-cased): no concept decides it, the current exact match is pinned and left, since the real API sends exact labels. Contradiction "spec says `P1D`, API sends `PT1D`": by design (section 6 defect 1); the mock's departure is pinned by the label test. Skipped: mixed `PT1D`/`P1D` periods inside one series and per-window label changes (the mock emits one period per request; the check is per period and the batch test covers per-point differences).
 
 ---
 

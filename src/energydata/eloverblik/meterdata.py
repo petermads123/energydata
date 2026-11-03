@@ -285,10 +285,15 @@ def _collect(
                 if not isinstance(period, dict):
                     raise EloverblikError(f"{label}: a period is not a JSON object")
                 got = period.get("resolution")
-                if got != expected and got not in accepted:
+                if not isinstance(got, str) or (
+                    got != expected and got not in accepted
+                ):
+                    names = " or ".join(
+                        repr(name) for name in (expected, *sorted(accepted))
+                    )
                     raise EloverblikError(
                         f"{label} returned resolution {got!r} for aggregation "
-                        f"{aggregation!r}, expected {expected!r}",
+                        f"{aggregation!r}, expected {names}",
                         metering_point_id=point_id,
                     )
                 interval = period.get("timeInterval")

@@ -110,7 +110,7 @@ offline against `EloverblikService` with every real transport refused. The offli
 retries; `meteringpoints`/`charges`/`meterdata` each endpoint's columns, dtypes, nulls and
 payload errors (meter data also periods, the history horizon, windows and batches, DST days);
 `spec` the package against the OpenAPI fixture, the mock's bodies against its schemas, the live
-suite's offline subprocess run (nothing private in its output), `scrub` and the docs. Rules the
+suite's offline subprocess run (nothing private in its output), `scrub`, the live suite's private report helpers (body shape, refusal line, which mismatch is the designed one: only `quarter`; digit runs of six or more redacted in raw server text) and the docs. Rules the
 tests pin: ids are ASCII digits only; a point listed twice is used once; an error text that
 echoes a token (of six characters or more) has it replaced by `<token>`; a series must carry
 the id of the result it is in; a missing or unparseable `timeInterval.start`, or a position
