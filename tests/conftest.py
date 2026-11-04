@@ -691,7 +691,8 @@ class EloverblikService:
     every other path needs a valid access token (401 ProblemDetails). `/isalive`,
     the listing, `getdetails`, `getcharges` and `gettimeseries` are served.
     `gettimeseries` validates as documented (HTTP 400 ProblemDetails carrying
-    `errorCode`: 20013, 30000-30004, 30008, 30014, 30017) and then answers one
+    `errorCode`: 20013, 30000, 30002-30004, 30008, 30014, 30017; 30001, an invalid
+    period, is the bare JSON string `"#30001: ..."` the real API sends) and then answers one
     result per requested id with generated CIM data: `dateTo` exclusive, Danish
     dates, quality `A04`, DST-correct. Quarter and hour data come as one Period per
     Danish day; day, month and year data as one Period over the whole range.

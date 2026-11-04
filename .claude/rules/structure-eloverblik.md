@@ -86,7 +86,7 @@ and `30016` give NaN for that window, any other raises. The clock is read only t
 `eloverblik_tariff(price_id="TAR1", prices=24, **fields)`; and `EloverblikService(points=None, *,
 refresh_token=...)`, a mock written from the spec: `/token`, bearer check, `/isalive`, the
 listing, `getdetails`, `getcharges` and `gettimeseries` with request-level validation (HTTP
-400 ProblemDetails with `errorCode`: 20013, 30000-30004, 30008, 30014, 30017), generated CIM data
+400 ProblemDetails with `errorCode`: 20013, 30000, 30002-30004, 30008, 30014, 30017; 30001, an invalid period, is the bare JSON string `"#30001: Period not allowed, ToDate is before FromDate."` the real API sends), generated CIM data
 (`dateTo` exclusive, Danish dates, quality `A04`, DST-correct), served data (`points`,
 `unlinked` for `includeAll=true`, `details` and `charges` by point id, property `point_ids`),
 a `/token` counter `token_calls`, scripting attributes (`codes`,
@@ -109,7 +109,7 @@ offline against `EloverblikService` with every real transport refused. The offli
 `client` covers tokens, the 401 refresh, error mapping, redaction of a token a server echoes and
 retries; `meteringpoints`/`charges`/`meterdata` each endpoint's columns, dtypes, nulls and
 payload errors (meter data also periods, the history horizon, windows and batches, DST days);
-`spec` the package against the OpenAPI fixture, the mock's bodies against its schemas, the live
+`spec` the package against the OpenAPI fixture, the mock's bodies against its schemas (and its invalid-period 400 as the real bare string, read back as code 30001), the live
 suite's offline subprocess run (nothing private in its output), `scrub`, the live suite's private report helpers (body shape, refusal line, which mismatch is the designed one: only `quarter`; digit runs of six or more redacted in raw server text), the live tests themselves driven in-process against the mock (a non-`quarter` mismatch fails the aggregation test, a `quarter` one is recorded, the quarter probe's line per point, the year probe's raw line per point) and the docs. Rules the
 tests pin: ids are ASCII digits only; a point listed twice is used once; an error text that
 echoes a token (of six characters or more) has it replaced by `<token>`; a series must carry

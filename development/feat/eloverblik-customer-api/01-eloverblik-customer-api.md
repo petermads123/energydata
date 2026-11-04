@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=4 status=active -->
+<!-- claude-plan step=5 status=active -->
 
 | Field | Value |
 |---|---|
@@ -539,6 +539,18 @@ a new test pins the mock's string body. No signature changed.
 | Plan completeness | Public API unchanged: `inspect.signature` of `ApiClient.request`/`request_response`, `gather_ordered`, `EloverblikClient` and `fetch_json`, the four `get_*`, `AGGREGATIONS`, `BASE_URL`, `REFRESH_TOKEN_ENV`, `DEFAULT_POLICY` all match section 2; the package exports exactly the planned names. No Missing, Deviation or Unplanned. The send-back changed `meterdata.py` internals only (`PT1D` expected for `day`, `P1D` still accepted). |
 | `python -m energydata.eloverblik.<module>` | `_common` (batches `[10, 10, 3]`, padded id, 17-digit refusal), `meterdata` (windows, misaligned-month refusal), `client`, `meteringpoints`, `charges` (no-token line): all exit 0, only the expected re-export `RuntimeWarning`. |
 | `structure-auditor` | "Nothing to change." `STRUCTURE.md` and `structure-eloverblik.md` match `915dfe1`: PT1D/P1D wording, `meterdata.py` public names, `EloverblikService` surface, the new live-suite helpers all private, `test_eloverblik_spec.py` summary accurate. No edits made. |
+
+### Re-run after send-back 2 (2026-11-03, code as step 3 left it in `9f90880`)
+
+| Check | Result |
+|---|---|
+| `ruff check .` | `All checks passed!` |
+| `ruff format --check .` | `107 files already formatted` |
+| `mypy` | `Success: no issues found in 70 source files` |
+| `pytest` | `3373 passed, 38 deselected, 2 errors in 567.94s` -- the 2 errors are the pre-existing Windows-only `tests/test_readers.py` ones, excluded |
+| Plan completeness | Public API unchanged: `_api_error` is private, `_STRING_BODY` private; no signature changed. No Missing, Deviation or Unplanned. |
+| `python -m energydata.eloverblik.<module>` | `client`, `_common`, `meteringpoints`, `meterdata`, `charges`: all run, offline parts and the no-token line as before. |
+| `structure-auditor` | Two stale descriptions in `.claude/rules/structure-eloverblik.md` fixed: the `EloverblikService` entry (30001 is the bare string, other codes ProblemDetails) and the `spec` suite summary (invalid-period 400 as the real string). `STRUCTURE.md` needed nothing. The `EloverblikService` docstring in `tests/conftest.py` said every validation error was ProblemDetails; corrected (docstring only). Re-run after the edits: ruff, format, mypy clean; `pytest -k eloverblik` green. |
 
 ---
 
