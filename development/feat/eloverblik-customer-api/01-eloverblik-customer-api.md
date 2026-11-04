@@ -7,7 +7,7 @@
 | Feature | `feat/eloverblik-customer-api` |
 | Round | `1` |
 | Branch | `feat/eloverblik-customer-api` |
-| Version | `major` — a new source subpackage; step 9 adds `<old> → <new>` (would be 1.0.0 → 2.0.0 from main on 2026-11-02) |
+| Version | `major` — 1.0.0 → 2.0.0 (a new source subpackage) |
 | Started | `2026-11-02` |
 
 ## Progress
