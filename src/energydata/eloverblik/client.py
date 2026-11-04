@@ -25,7 +25,9 @@ DEFAULT_POLICY: RetryPolicy = RetryPolicy(
 
 _TOKEN_PATTERN = re.compile(r"[\x21-\x7e]+")
 _MIN_SECRET = 6
-_STRING_BODY = re.compile(r"#(\d+):\s*(.*)", re.DOTALL)
+# ASCII digits only, and at most 18: a longer run is no real code, and `int()` refuses
+# more than 4300 digits with a `ValueError` that would escape as the wrong exception.
+_STRING_BODY = re.compile(r"#([0-9]{1,18}):\s*(.*)", re.DOTALL)
 
 
 class EloverblikError(Exception):

@@ -512,6 +512,254 @@ def test_a_bare_string_body_echoing_a_token_is_redacted() -> None:
     assert "<token>" in str(caught.value)
 
 
+def _string_error(body: str, status: int = 400) -> EloverblikError:
+    """The error `_api_error` builds for a JSON string `body`."""
+    return _api_error(LISTING, httpx.Response(status, json=body))
+
+
+@pytest.mark.parametrize(
+    ("body", "code", "text"),
+    [
+        ("#30001:", 30001, None),
+        ("#30001:   ", 30001, None),
+        ("#30001:\n", 30001, None),
+        ("   ", None, None),
+        ("\n\t", None, None),
+        ("  #30001:   Period not allowed.  \n", 30001, "Period not allowed."),
+        ("#30001: line one\nline two", 30001, "line one\nline two"),
+        ("#030001: x", 30001, "x"),
+        ("#0: x", 0, "x"),
+        ("#007: x", 7, "x"),
+        ("Error #30001: x", None, "Error #30001: x"),
+        ("# 30001: x", None, "# 30001: x"),
+        ("#30001 : x", None, "#30001 : x"),
+        ("#30001 Period", None, "#30001 Period"),
+        ("#-1: x", None, "#-1: x"),
+        ("#30001x: y", None, "#30001x: y"),
+        ("30001: x", None, "30001: x"),
+        ("#30001: Perioden er ugyldig - æøå", 30001, "Perioden er ugyldig - æøå"),
+    ],
+)
+def test_a_bare_string_body_grammar(
+    body: str, code: int | None, text: str | None
+) -> None:
+    error = _string_error(body)
+
+    assert (error.error_code, error.error_text) == (code, text)
+    assert error.status == 400
+    assert str(error).startswith("Eloverblik API: HTTP 400")
+    assert not str(error).endswith(": ")
+    if code is not None:
+        assert f"error {code} on {LISTING}" in str(error)
+    else:
+        assert "error " not in str(error).split(" on ")[0]
+
+
+def test_a_bare_string_body_with_a_code_and_no_text_has_no_dangling_colon() -> None:
+    error = _string_error("#30001:")
+
+    assert str(error) == f"Eloverblik API: HTTP 400 error 30001 on {LISTING}"
+
+
+def test_a_bare_string_body_gives_the_full_message_with_a_correlation_id() -> None:
+    response = httpx.Response(
+        400,
+        json="#30001: Period not allowed.",
+        headers={"X-Correlation-ID": "abc-1"},
+    )
+
+    error = _api_error(LISTING, response)
+
+    assert str(error) == (
+        f"Eloverblik API: HTTP 400 error 30001 on {LISTING}: Period not allowed."
+        " (correlation id abc-1)"
+    )
+    assert error.correlation_id == "abc-1"
+    assert error.metering_point_id is None
+
+
+def test_a_bare_string_body_needs_no_correlation_header() -> None:
+    error = _string_error("#30001: t")
+
+    assert error.correlation_id is None
+    assert "correlation" not in str(error)
+    assert (error.error_code, error.error_text) == (30001, "t")
+
+
+@pytest.mark.parametrize("digits", [1, 18, 19, 20, 4300, 4301, 5000])
+def test_a_bare_string_body_never_raises_a_value_error_for_a_long_code(
+    digits: int,
+) -> None:
+    body = "#" + "9" * digits + ": x"
+
+    error = _string_error(body)
+
+    assert isinstance(error, EloverblikError)
+    assert error.status == 400
+    if digits <= 18:
+        assert error.error_code == int("9" * digits)
+        assert error.error_text == "x"
+    else:
+        assert error.error_code is None
+        assert error.error_text == body
+
+
+def test_a_huge_code_is_an_eloverblik_error_through_the_client() -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = _respond(400, "#" + "1" * 5000 + ": x")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    assert caught.value.status == 400
+    assert caught.value.error_code is None
+
+
+@pytest.mark.parametrize("body", ["#３０００１: x", "#٣٠٠٠١: x", "#3０001: x"])
+def test_a_bare_string_body_with_non_ascii_digits_gets_no_code(body: str) -> None:
+    error = _string_error(body)
+
+    assert error.error_code is None
+    assert error.error_text == body
+
+
+def test_a_non_matching_string_body_echoing_a_token_is_redacted() -> None:
+    service = EloverblikService()
+    secret = service.refresh_token
+    service.overrides["meteringpoints"] = _respond(400, f"bad token {secret}")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    error = caught.value
+    assert error.error_code is None
+    assert secret not in str(error)
+    assert secret not in (error.error_text or "")
+    assert error.error_text == "bad token <token>"
+
+
+def test_a_string_body_echoing_the_access_token_is_redacted() -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = _respond(400, "token access-1 is not valid")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    assert caught.value.error_text == "token <token> is not valid"
+    assert "access-1" not in str(caught.value)
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_a_string_body_on_an_exhausted_retry_is_mapped_with_its_code(
+    status: int,
+) -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = _respond(status, "#50000: busy")
+
+    with service.client(policy=INSTANT) as client, pytest.raises(EloverblikError) as e:
+        client.get_json("GET", LISTING)
+
+    assert e.value.status == status
+    assert (e.value.error_code, e.value.error_text) == (50000, "busy")
+    assert e.value.correlation_id == _correlation(len(service.requests))
+    assert len(service.calls("/meteringpoints")) == 2
+
+
+def test_a_string_body_from_the_token_endpoint_keeps_code_text_and_hint() -> None:
+    service = EloverblikService()
+    secret = service.refresh_token
+    service.overrides["token"] = _respond(401, f"#10001: token expired {secret}")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    error = caught.value
+    message = str(error)
+    assert error.status == 401
+    assert (error.error_code, error.error_text) == (10001, "token expired <token>")
+    assert secret not in message
+    assert (
+        message.index("error 10001")
+        < message.index("token expired <token>")
+        < message.index("the refresh token was rejected")
+        < message.index("(correlation id ")
+    )
+
+
+def test_a_string_body_on_a_data_401_refreshes_once_then_raises_with_its_code() -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = _respond(401, "#10002: Unauthorized")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    error = caught.value
+    assert error.status == 401
+    assert error.error_code == 10002
+    assert service.token_calls == 2
+    assert "refresh token was rejected" not in str(error)
+
+
+def test_a_string_body_on_a_data_403_is_not_refreshed() -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = _respond(403, "#10003: Forbidden")
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    assert (caught.value.status, caught.value.error_code) == (403, 10003)
+    assert service.token_calls == 1
+    assert len(service.calls("/meteringpoints")) == 1
+
+
+def test_a_string_body_with_escaped_non_ascii_text_is_decoded() -> None:
+    response = httpx.Response(
+        400,
+        content=b'"#30001: Periode ikke tilladt \\u00e6\\u00f8\\u00e5"',
+        headers={"Content-Type": "application/json"},
+    )
+
+    error = _api_error(LISTING, response)
+
+    assert (error.error_code, error.error_text) == (
+        30001,
+        "Periode ikke tilladt æøå",
+    )
+
+
+@pytest.mark.parametrize("content", [b"null", b"30001", b"true", b'"   "'])
+def test_a_json_scalar_error_body_gives_no_code_or_text(content: bytes) -> None:
+    error = _api_error(LISTING, httpx.Response(400, content=content))
+
+    assert error.status == 400
+    assert (error.error_code, error.error_text) == (None, None)
+
+
+def test_an_unquoted_text_error_body_gives_no_code_or_text() -> None:
+    response = httpx.Response(
+        400,
+        content=b"#30001: Period not allowed",
+        headers={"Content-Type": "text/plain"},
+    )
+
+    error = _api_error(LISTING, response)
+
+    assert (error.error_code, error.error_text) == (None, None)
+
+
+def test_a_bare_string_error_is_idempotent() -> None:
+    response = httpx.Response(400, json="#30001: x")
+
+    first = _api_error(LISTING, response)
+    second = _api_error(LISTING, response)
+
+    assert str(first) == str(second)
+    assert (first.error_code, first.error_text) == (
+        second.error_code,
+        second.error_text,
+    )
+
+
 @pytest.mark.parametrize("content", [b"<html>boom</html>", b"", b"[1, 2]"])
 def test_a_non_object_error_body_gives_no_code_or_text(content: bytes) -> None:
     service = EloverblikService()
