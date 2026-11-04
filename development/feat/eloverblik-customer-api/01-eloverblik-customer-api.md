@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=7 status=active -->
+<!-- claude-plan step=8 status=active -->
 
 | Field | Value |
 |---|---|
@@ -816,6 +816,15 @@ Drift: none. Verdict: all criteria met; the work does not go back to step 3.
 | Whole tree | `ruff check .` clean; `ruff format --check .` 107 files already formatted; `mypy` no issues in 70 source files; `pytest` 3366 passed, 38 deselected, 2 errors in 286.50s (the pre-existing Windows-only `tests/test_readers.py` ones, also on `origin/main`, excluded). `origin/main` (`d71e224`) is already an ancestor of the branch: nothing to bring in. |
 | Plan file | steps 1 to 6 done; section 6 re-run table has no unmet row (A3 `day` and A7's real 400 shape, A8's real-token run await the user's second live run, as recorded). |
 | Diff review | `e1c29ff..HEAD`: 7 files, +745/-21 (`meterdata.py`, `conftest.py`, three test files, `structure-eloverblik.md`, this plan). No runner (`git ls-files` finds no `eloverblik_live_run`), token, name, address, CPR or CVR. The only 18-digit string added is the synthetic `571313100000008261` redaction-test id, and the only JWT-shaped string a fake in a redaction test; the user's live report in section 6 carries only scrubbed ids (`...8261`, `...1743`). |
+
+### Re-run after send-back 2 (2026-11-04)
+
+| Field | Value |
+|---|---|
+| Commits since the earlier ship (`0fc1d68`) | `b33c8ca` Recommend: send the real 400 body shape back to the build; step 3: `9f90880` real 400 body shape; step 4: `a15ec9d` Verify (re-run); step 5: `d62059d` WIP bound and ASCII-restrict the string-body code, `127a7fc` Test (re-run); step 6: `be5e10c` Concept check (re-run); step 7: the `Ship:` commit that closes this re-run. Every step committed; none missing. |
+| Whole tree | `ruff check .` clean; `ruff format --check .` 107 files already formatted; `mypy` no issues in 70 source files; `pytest` 3419 passed, 38 deselected, 2 errors (the pre-existing Windows-only `tests/test_readers.py` ones, also on `origin/main`, excluded). The first full run showed 1 failure not identified (output was swamped by the readers errors); two further full runs were green (3419 passed each), so it did not reproduce and is recorded as a one-off, not investigated further. `origin/main` (`d71e224`) is an ancestor of the branch: nothing to bring in. |
+| Plan file | steps 1 to 6 done; section 6 re-run table has no unmet row. |
+| Diff review | `0fc1d68..HEAD`: 7 files, +453/-12 (`client.py`, `conftest.py`, two test files, `structure-eloverblik.md`, `DEVELOPMENT.md`, this plan). No runner (`git ls-files` finds no `eloverblik_live_run`), token, real metering-point id, name, address, CPR or CVR; no 18-digit string, JWT-shaped string or CPR-shaped number added. |
 
 ---
 
