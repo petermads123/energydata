@@ -463,6 +463,55 @@ def test_problem_details_bodies_are_mapped(
         assert text in str(error)
 
 
+@pytest.mark.parametrize(
+    ("body", "code", "text"),
+    [
+        (
+            "#30001: Period not allowed, ToDate is before FromDate.",
+            30001,
+            "Period not allowed, ToDate is before FromDate.",
+        ),
+        ("#20013:no space", 20013, "no space"),
+        ("Something went wrong", None, "Something went wrong"),
+        ("#abc: not digits", None, "#abc: not digits"),
+        ("", None, None),
+    ],
+)
+def test_a_bare_string_body_gives_code_and_text(
+    body: str, code: int | None, text: str | None
+) -> None:
+    service = EloverblikService()
+    service.overrides["meteringpoints"] = lambda _request: httpx.Response(
+        400, json=body
+    )
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    error = caught.value
+    assert (error.error_code, error.error_text) == (code, text)
+    if code is not None:
+        assert str(code) in str(error)
+    if text:
+        assert text in str(error)
+
+
+def test_a_bare_string_body_echoing_a_token_is_redacted() -> None:
+    service = EloverblikService()
+    secret = service.refresh_token
+    service.overrides["meteringpoints"] = lambda _request: httpx.Response(
+        400, json=f"#30001: bad {secret}"
+    )
+
+    with service.client() as client, pytest.raises(EloverblikError) as caught:
+        client.get_json("GET", LISTING)
+
+    assert caught.value.error_code == 30001
+    assert secret not in str(caught.value)
+    assert secret not in (caught.value.error_text or "")
+    assert "<token>" in str(caught.value)
+
+
 @pytest.mark.parametrize("content", [b"<html>boom</html>", b"", b"[1, 2]"])
 def test_a_non_object_error_body_gives_no_code_or_text(content: bytes) -> None:
     service = EloverblikService()

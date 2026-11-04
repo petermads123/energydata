@@ -265,7 +265,7 @@ def test_the_mocks_bodies_validate_against_the_spec(
 def test_the_mocks_error_bodies_are_problem_details() -> None:
     service = EloverblikService()
     body = {"meteringPoints": {"meteringPoint": [ELOVERBLIK_POINT_A]}}
-    path = "/meterdata/gettimeseries/2026-01-02/2026-01-01/Day"
+    path = "/meterdata/gettimeseries/2026-01-01/2026-01-01/Day"
 
     with service.client() as c, pytest.raises(EloverblikError):
         c.get_json("POST", path, body=body)
@@ -274,6 +274,22 @@ def test_the_mocks_error_bodies_are_problem_details() -> None:
     problem = service(bad).json()
     assert set(problem) <= _props("ProblemDetails") | {"errorCode"}
     assert "errorCode" in problem
+
+
+def test_the_mocks_invalid_period_error_is_the_real_bare_string() -> None:
+    service = EloverblikService()
+    body = {"meteringPoints": {"meteringPoint": [ELOVERBLIK_POINT_A]}}
+    path = "/meterdata/gettimeseries/2026-01-02/2026-01-01/Day"
+
+    with service.client() as c, pytest.raises(EloverblikError) as caught:
+        c.get_json("POST", path, body=body)
+
+    bad = [r for r in service.requests if "gettimeseries" in r.url.path][0]
+    assert (
+        service(bad).json() == "#30001: Period not allowed, ToDate is before FromDate."
+    )
+    assert caught.value.error_code == 30001
+    assert caught.value.error_text == "Period not allowed, ToDate is before FromDate."
 
 
 # --- exports, showcases ----------------------------------------------------------------------

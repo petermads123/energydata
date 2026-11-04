@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=3 status=active -->
+<!-- claude-plan step=4 status=active -->
 
 | Field | Value |
 |---|---|
@@ -500,6 +500,15 @@ each point's raw `success`/`errorCode`/`errorText`, series, periods and resoluti
 `client.get_json`. Offline: 17 live tests pass with `ELOVERBLIK_LIVE_MOCK=1`;
 `test_the_offline_live_run_reports_every_probe` also expects the body line and the two year lines.
 Whole tree: ruff, format, mypy clean; `pytest` 3285 passed, 38 deselected, 2 known errors.
+
+**Send-back 2 from step 8 (2026-11-03).** Defect 1: `_api_error` (`client.py`) now also reads a bare
+JSON string body: `#<digits>: <text>` gives `error_code` (int) and `error_text` (redacted with
+`_redact`), a string of another form is the text with no code; object shapes unchanged. The mock
+answers its `30001` invalid-period 400 with the real string; the other request-level codes stay
+ProblemDetails objects (their real shape is unknown). The live test already reports `error_code` and
+`error_text`, so it needed no change. Tests: string-body group and token redaction in
+`test_eloverblik_client.py`; `test_eloverblik_spec.py` object-shape test moved to a `30002` request and
+a new test pins the mock's string body. No signature changed.
 
 ---
 

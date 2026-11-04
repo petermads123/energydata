@@ -916,6 +916,11 @@ class EloverblikService:
             (too_long, 30014),
             (last <= horizon, 30017),
         ):
+            if failed and code == 30001:
+                # The real API answers this one with a bare JSON string.
+                return httpx.Response(
+                    400, json="#30001: Period not allowed, ToDate is before FromDate."
+                )
             if failed:
                 return problem(400, "Bad Request", errorCode=code)
         results = [self._series(i, first, last, aggregation) for i in ids]

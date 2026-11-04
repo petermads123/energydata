@@ -25,6 +25,7 @@ DEFAULT_POLICY: RetryPolicy = RetryPolicy(
 
 _TOKEN_PATTERN = re.compile(r"[\x21-\x7e]+")
 _MIN_SECRET = 6
+_STRING_BODY = re.compile(r"#(\d+):\s*(.*)", re.DOTALL)
 
 
 class EloverblikError(Exception):
@@ -329,7 +330,16 @@ def _api_error(
         body = read_json(response.content)
     except ParseError:
         body = None
-    if isinstance(body, dict):
+    if isinstance(body, str):
+        # The real API answers some request errors with a bare JSON string,
+        # "#30001: Period not allowed, ...".
+        match = _STRING_BODY.fullmatch(body.strip())
+        if match is not None:
+            error_code = int(match.group(1))
+            body = match.group(2)
+        if body.strip():
+            error_text = _redact(body.strip(), secrets)
+    elif isinstance(body, dict):
         code = body.get("errorCode")
         if isinstance(code, int) and not isinstance(code, bool):
             error_code = code
