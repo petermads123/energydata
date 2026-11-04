@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=6 status=active -->
+<!-- claude-plan step=7 status=active -->
 
 | Field | Value |
 |---|---|
@@ -768,6 +768,34 @@ Defect in this round's code, for steps 3 to 7:
    `title`) working; a string body not of the `#<digits>: <text>` form becomes the text with no
    code. Make the mock's 400 for an invalid period use the real shape, and update the live
    test's expectations (it should now report `code=30001` and the text).
+
+### Re-run after send-back 2 (2026-11-04, code as `127a7fc` left it)
+
+Audited against section 1 first, then the code. Whole tree at this step: ruff, format and mypy clean per steps 4 and 5; `pytest` 3419 passed, 38 deselected, 2 known `test_readers.py` errors (step 5's log); this step re-ran `tests/test_eloverblik_client.py` and `tests/test_eloverblik_spec.py`: 216 passed.
+
+| # | Criterion | Met | Evidence |
+|---|---|---|---|
+| A1 | Metering points | yes | untouched by the send-back (diff `0fc1d68..HEAD` is `client.py` error mapping, the mock's 30001 branch, tests, docs); `test_metering_points_*` green in step 5 |
+| A2 | Details | yes | untouched; `test_details_*` |
+| A3 | Meter data | yes | untouched; and now live-evidenced by the user's second run: `day` 13 rows with `PT1D`, `dateTo` exclusive, 25 hourly rows on 2026-10-25, 730 days accepted, `quarter` on an hourly point refused as designed (quoted above) |
+| A4 | Long periods, many points | yes | untouched; live: `[730 days] accepted`; windows/batch tests green |
+| A5 | Charges | yes | untouched; live: `[test_charges] 29 rows: tariff 27, subscription 2` |
+| A6 | Token | yes | the new code paths keep redaction: `_api_error` passes the string body through `_redact(..., secrets)`; `test_a_non_matching_string_body_echoing_a_token_is_redacted`, `test_a_string_body_echoing_the_access_token_is_redacted`, `test_a_string_body_from_the_token_endpoint_keeps_code_text_and_hint`, `test_a_string_body_on_a_data_401_refreshes_once_then_raises_with_its_code` (still exactly one refresh) |
+| A7 | Errors | yes (offline, against the real shape) | `client.py:30` `_STRING_BODY = #([0-9]{1,18}):\s*(.*)`, `client.py:337-343` reads code and text from a bare JSON string; object shapes (`errorCode`/`errorText`, `detail`, `title`) kept. Reproduction from the send-back, run now: `httpx.Response(400, json="#30001: Period not allowed, ToDate is before FromDate.", headers={"X-Correlation-ID": "abc"})` gives `error_code == 30001`, `error_text == 'Period not allowed, ToDate is before FromDate.'`, message `Eloverblik API: HTTP 400 error 30001 on /x: Period not allowed, ToDate is before FromDate. (correlation id abc)`. Tests: `test_a_bare_string_body_grammar` x18, `test_a_bare_string_body_gives_the_full_message_with_a_correlation_id`, the long-code and non-ASCII tests, 429/503 exhausted-retry string bodies. Request-level and per-point errors still carry status, code, text, point and correlation id (unchanged tests green). The next live run is expected to show `code=30001` |
+| A8 | Tests and live run | yes | Real-token run done by the user: 17 passed in 27.38 s, report scrubbed (ids `...8261`, `...1743`, no names, addresses, CPR/CVR). Plain `pytest` offline with no token green; 17 `live` tests skipped without a token, deselected by default; offline live run (`ELOVERBLIK_LIVE_MOCK=1`) 17 passed per step 5, and this step ran `test_error_body_of_an_invalid_request` against the mock: 1 passed. The runner stays out of git (`git ls-files` finds no `live_run`) |
+| A9 | Docs | yes | `.claude/rules/structure-eloverblik.md` states the bare-string grammar, the mock's 30001 and the tests; `STRUCTURE.md` needs no change (no module or public signature changed); structure-auditor before this step: nothing to change; `test_the_rules_file_*` green |
+
+Send-back defect:
+
+| # | Defect | Closed | Evidence |
+|---|---|---|---|
+| 1 | A7: the real 400 body is a bare JSON string and its code and text were dropped | yes offline | reproduction above now gives code 30001 and the text, both in the message, tokens redacted; the mock's invalid-period 400 is the real string (`conftest.py` `EloverblikService`, `test_the_mocks_invalid_period_error_is_the_real_bare_string`); the live test needed no change: it reports `error.error_code` and `error_text`, which now read `30001` and the text (confirmed on the mock). A string not of the `#<digits>: <text>` form becomes the text with no code (`test_a_bare_string_body_grammar`). Confirmation against the real API is the next live run |
+
+Out of scope: nothing built (the diff is the error body parser, the mock, tests and docs; no endpoint, export or `Actual`). Connections and surface: no public name added or removed; `_api_error` and `_STRING_BODY` are private.
+
+Choices the step 5 tests made that are not in section 1: the 18-digit bound on the code (real codes are 5 digits) and unquoted `text/plain` bodies giving no code. Both sit inside A7's promise that the error is an `EloverblikError` (a longer code made `int()` raise `ValueError`), widen nothing the concept decided, and are recorded in step 5's log; I judge them implementation detail, not a change to section 1.
+
+Drift: none. Verdict: all criteria met; the work does not go back to step 3.
 
 ---
 
