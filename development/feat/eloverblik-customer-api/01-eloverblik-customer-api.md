@@ -1,6 +1,6 @@
 # Eloverblik Customer API: meter data and charges
 
-<!-- claude-plan step=5 status=active -->
+<!-- claude-plan step=6 status=active -->
 
 | Field | Value |
 |---|---|
@@ -605,6 +605,24 @@ Reader reports merged: `input-space` and `contract`, scoped to the send-back's c
 **Bugs the tests found, fixed in code:** (1) `meterdata.py`: a non-text `resolution` (list, dict, number) escaped as `TypeError: unhashable type` from `got not in accepted`, a regression of `915dfe1`; now `not isinstance(got, str)` is refused with the `EloverblikError` naming the point. (2) `_body_shape` cut at 300 characters before scrubbing, so a token, JWT or id spanning the cut came through partly; the whole body is now scrubbed first and the excerpt cut after. (3) `_is_resolution_refusal` accepted any mismatch for any aggregation and a missing resolution, so a repeat of defect 1 would have been recorded as a refusal; it now matches only `returned resolution '<label>' for aggregation 'quarter'` with `status is None` (section 6 defect 3 designs only `quarter`), and every other mismatch fails the live test. (4) `_refusal` did not scrub or cap `error_text`; it does now. (5) `_report_year_raw` counted periods from the first result for every item; it counts the item's own. Also: new `_scrub_raw` redacts any run of six or more digits (after ids were shortened) in the raw server-text channels (400 body excerpt and keys, `_refusal` message and text, year probe `errorText`), conservative cover for CVR and CPR digits (A8). The day refusal message now names both accepted labels (`expected 'PT1D' or 'P1D'`).
 
 Decisions on the record: contradiction "strictness differs from the unit check" (labels are exact, the unit is stripped and upper-cased): no concept decides it, the current exact match is pinned and left, since the real API sends exact labels. Contradiction "spec says `P1D`, API sends `PT1D`": by design (section 6 defect 1); the mock's departure is pinned by the label test. Skipped: mixed `PT1D`/`P1D` periods inside one series and per-window label changes (the mock emits one period per request; the check is per period and the batch test covers per-point differences).
+
+### Re-run after send-back 2 (2026-11-04, code as `9f90880` left it)
+
+Reader reports merged: `input-space` and `contract`, scoped to `_api_error`/`_STRING_BODY` (saved verbatim in the session scratchpad as `td_sb2_input_space.md` and `td_sb2_contract.md`). Earlier logs kept.
+
+| Intent | Tests (file) | Result |
+|---|---|---|
+| A7 string-body grammar | `test_a_bare_string_body_grammar` x18 (code only, whitespace-only, padded, multiline, leading zeros, `#0`, mid-text marker, `# 30001`, `#30001 :`, no colon, `#-1`, `#30001x`, no `#`, Danish text), `test_a_bare_string_body_with_a_code_and_no_text_has_no_dangling_colon`, `test_a_bare_string_body_gives_the_full_message_with_a_correlation_id`, `test_a_bare_string_body_needs_no_correlation_header` (`test_eloverblik_client.py`) | pass |
+| A7 huge or non-ASCII code | `test_a_bare_string_body_never_raises_a_value_error_for_a_long_code` x7 (1, 18, 19, 20, 4300, 4301, 5000 digits), `test_a_huge_code_is_an_eloverblik_error_through_the_client`, `test_a_bare_string_body_with_non_ascii_digits_gets_no_code` x3 | pass after the fix |
+| A6/A7 redaction and paths | `test_a_non_matching_string_body_echoing_a_token_is_redacted`, `test_a_string_body_echoing_the_access_token_is_redacted`, `test_a_string_body_on_an_exhausted_retry_is_mapped_with_its_code` x2 (429/503), `test_a_string_body_from_the_token_endpoint_keeps_code_text_and_hint`, `test_a_string_body_on_a_data_401_refreshes_once_then_raises_with_its_code`, `test_a_string_body_on_a_data_403_is_not_refreshed` | pass |
+| Body forms | `test_a_string_body_with_escaped_non_ascii_text_is_decoded`, `test_a_json_scalar_error_body_gives_no_code_or_text` x4, `test_an_unquoted_text_error_body_gives_no_code_or_text` (pinned: unquoted text gives no code), `test_a_bare_string_error_is_idempotent` | pass |
+| Mock's 30001 | `test_the_mocks_invalid_period_error_is_the_real_bare_string` (`test_eloverblik_spec.py`) extended: status, no point, correlation id, the whole message | pass |
+
+**Bug the tests found, fixed in code:** a string body whose code is more than 4300 digits made `int()` raise a bare `ValueError` out of `fetch_json` (promise: `EloverblikError`); `_STRING_BODY` also accepted non-ASCII digits (`\d`), against the subpackage's ASCII-only rule for ids. Now `#([0-9]{1,18}):`: a longer or non-ASCII run is no code and the whole string is the text. This follows A7 (the error is an `EloverblikError`) and the ids rule; section 1 is not amended. `structure-eloverblik.md` states the grammar. No signature changed.
+
+Decisions on the record: the 18-digit bound is a choice (real codes are 5 digits); unquoted `text/plain` bodies give no code, pinned so a change is deliberate. A UTF-8 BOM in the JSON body (suspicion-level) was not written: `json.loads` behaviour, unobserved from the API. Skipped: purity (immutable response), the `EloverblikError` docstring remark that `error_text` is redacted (wording only, tested).
+
+Whole tree: `ruff check .`, `ruff format --check .`, `mypy` clean; `pytest` 3419 passed, 38 deselected, 2 known errors; live suite offline (`ELOVERBLIK_LIVE_MOCK=1`) 17 passed.
 
 ---
 

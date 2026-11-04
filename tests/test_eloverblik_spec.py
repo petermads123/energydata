@@ -294,9 +294,7 @@ def test_the_mocks_invalid_period_error_is_the_real_bare_string() -> None:
     assert caught.value.error_text == "Period not allowed, ToDate is before FromDate."
     assert caught.value.status == 400
     assert caught.value.metering_point_id is None
-    assert caught.value.correlation_id == str(
-        uuid.UUID(int=made, version=4)
-    )
+    assert caught.value.correlation_id == str(uuid.UUID(int=made, version=4))
     assert str(caught.value) == (
         f"Eloverblik API: HTTP 400 error 30001 on {path}: Period not allowed, "
         f"ToDate is before FromDate. (correlation id {caught.value.correlation_id})"
