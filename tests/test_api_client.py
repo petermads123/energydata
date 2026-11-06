@@ -534,3 +534,229 @@ def test_api_client_main_showcase_runs(capsys: pytest.CaptureFixture[str]) -> No
     out = capsys.readouterr().out
     assert "one request" in out
     assert "closed after the block: True" in out
+
+
+# --- headers and json --------------------------------------------------------------
+
+
+def _echo(seen: list[httpx.Request]) -> httpx.AsyncBaseTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": 1})
+
+    return httpx.MockTransport(handler)
+
+
+def test_request_headers_are_merged_over_the_client_headers_for_one_request() -> None:
+    seen: list[httpx.Request] = []
+    client = ApiClient(
+        BASE,
+        headers={"Accept": "a/b", "X-One": "1"},
+        transport=_echo(seen),
+    )
+
+    async def go() -> None:
+        await client.request(
+            "GET", "/p", headers={"X-One": "2", "Authorization": "Bearer t"}
+        )
+        await client.request("GET", "/p")
+
+    with client:
+        client.run(go)
+
+    assert seen[0].headers["X-One"] == "2"
+    assert seen[0].headers["Accept"] == "a/b"
+    assert seen[0].headers["Authorization"] == "Bearer t"
+    assert seen[1].headers["X-One"] == "1"
+    assert "Authorization" not in seen[1].headers
+
+
+def test_request_headers_override_case_insensitively() -> None:
+    seen: list[httpx.Request] = []
+    client = ApiClient(BASE, headers={"Accept": "a/b"}, transport=_echo(seen))
+
+    async def go() -> None:
+        await client.request("GET", "/p", headers={"accept": "text/csv"})
+
+    with client:
+        client.run(go)
+
+    assert seen[0].headers.get_list("accept") == ["text/csv"]
+
+
+@pytest.mark.parametrize(
+    ("body", "wire"),
+    [({}, b"{}"), ([], b"[]"), (0, b"0"), ({"k": [1]}, b'{"k":[1]}')],
+)
+def test_request_json_bodies_are_sent_even_when_falsy(
+    body: object, wire: bytes
+) -> None:
+    seen: list[httpx.Request] = []
+    client = ApiClient(BASE, transport=_echo(seen))
+
+    async def go() -> None:
+        await client.request("POST", "/p", json=body)
+
+    with client:
+        client.run(go)
+
+    assert seen[0].content.replace(b" ", b"") == wire
+    assert seen[0].headers["content-type"] == "application/json"
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"headers": {}}, {"json": None}])
+def test_request_without_headers_or_json_is_unchanged(kwargs: dict[str, Any]) -> None:
+    seen: list[httpx.Request] = []
+    client = ApiClient(BASE, headers={"Accept": "a/b"}, transport=_echo(seen))
+
+    async def go() -> None:
+        await client.request("GET", "/p", **kwargs)
+
+    with client:
+        client.run(go)
+
+    assert seen[0].content == b""
+    assert "content-type" not in seen[0].headers
+    assert seen[0].headers["Accept"] == "a/b"
+
+
+def test_request_headers_and_body_are_resent_on_a_retry() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"ok": 1})
+
+    client = ApiClient(
+        BASE,
+        policy=RetryPolicy(max_attempts=2, base_delay=0.0, max_delay=0.0),
+        transport=httpx.MockTransport(handler),
+    )
+
+    async def go() -> None:
+        await client.request("POST", "/p", headers={"X-A": "1"}, json={"k": 1})
+
+    with client:
+        client.run(go)
+
+    assert [r.headers["X-A"] for r in seen] == ["1", "1"]
+    assert seen[0].content == seen[1].content != b""
+
+
+def test_request_response_returns_the_unparsed_response() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"not json at all", headers={"X-Correlation-ID": "abc"}
+        )
+
+    client = ApiClient(BASE, transport=httpx.MockTransport(handler))
+
+    async def go() -> httpx.Response:
+        return await client.request_response("GET", "/p")
+
+    with client:
+        response = client.run(go)
+
+    assert response.status_code == 200
+    assert response.content == b"not json at all"
+    assert response.headers["X-Correlation-ID"] == "abc"
+
+
+def test_request_response_sends_headers_params_and_body_like_request() -> None:
+    seen: list[httpx.Request] = []
+    client = ApiClient(BASE, headers={"Accept": "a/b"}, transport=_echo(seen))
+
+    async def go() -> None:
+        await client.request_response(
+            "POST", "/p", params={"q": 1}, headers={"X-A": "1"}, json={"k": 1}
+        )
+        await client.request(
+            "POST", "/p", params={"q": 1}, headers={"X-A": "1"}, json={"k": 1}
+        )
+
+    with client:
+        client.run(go)
+
+    first, second = seen
+    assert first.url == second.url
+    assert first.content == second.content
+    assert first.headers["X-A"] == second.headers["X-A"] == "1"
+    assert first.headers["Accept"] == "a/b"
+
+
+def test_request_response_retries_a_503_then_returns_the_200() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(503 if len(seen) == 1 else 200, json={"ok": 1})
+
+    client = ApiClient(
+        BASE,
+        policy=RetryPolicy(max_attempts=2, base_delay=0.0, max_delay=0.0),
+        transport=httpx.MockTransport(handler),
+    )
+
+    async def go() -> httpx.Response:
+        return await client.request_response("GET", "/p")
+
+    with client:
+        response = client.run(go)
+
+    assert response.status_code == 200
+    assert len(seen) == 2
+
+
+def test_request_response_raises_a_status_error_for_a_400_without_retry() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(400, json={"errorCode": 1})
+
+    client = ApiClient(BASE, transport=httpx.MockTransport(handler))
+
+    async def go() -> httpx.Response:
+        return await client.request_response("GET", "/p")
+
+    with client, pytest.raises(httpx.HTTPStatusError):
+        client.run(go)
+
+    assert len(seen) == 1
+
+
+def test_request_response_on_a_foreign_loop_raises() -> None:
+    client = ApiClient(BASE, transport=_echo([]))
+
+    async def go() -> None:
+        await client.request_response("GET", "/p")
+
+    with client:
+        client.run(lambda: asyncio.sleep(0))
+        with pytest.raises(RuntimeError, match="own loop"):
+            asyncio.run(go())
+
+
+def test_request_response_is_capped_by_the_same_semaphore() -> None:
+    in_flight = 0
+    peak = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return httpx.Response(200, json={})
+
+    client = ApiClient(BASE, max_concurrency=2, transport=httpx.MockTransport(handler))
+
+    async def go() -> None:
+        await asyncio.gather(*[client.request_response("GET", "/p") for _ in range(6)])
+
+    with client:
+        client.run(go)
+
+    assert peak == 2

@@ -1,17 +1,22 @@
 import json
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import httpx
+import pandas as pd
 import pytest
 
 from energydata.energidataservice import EnergiDataServiceClient
 from energydata.minstroem import MinStroemClient
 from energydata.utils import RetryPolicy
+
+if TYPE_CHECKING:
+    from energydata.eloverblik import EloverblikClient
 
 
 def block_real_transports(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -504,3 +509,556 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
         terminalreporter.section("MIN STRØM LIVE SUMMARY")
         for line in _LIVE_LINES:
             terminalreporter.write_line(line)
+
+
+# --- Eloverblik ------------------------------------------------------------
+
+ELOVERBLIK_REFRESH_TOKEN = "test-refresh-token"
+ELOVERBLIK_POINT_A = "571313100000000001"
+ELOVERBLIK_POINT_B = "571313100000000002"
+_ELO_TIME = "%Y-%m-%dT%H:%M:%SZ"
+_ELO_RESOLUTION = {
+    "Quarter": "PT15M",
+    "Hour": "PT1H",
+    "Day": "PT1D",  # what the real API labels daily periods
+    "Month": "P1M",
+    "Year": "P1Y",
+}
+_ELO_DETAIL_FIELDS = [
+    "meteringPointId",
+    "parentMeteringPointId",
+    "typeOfMP",
+    "energyTimeSeriesMeasureUnit",
+    "estimatedAnnualVolume",
+    "settlementMethod",
+    "meterNumber",
+    "gridOperatorName",
+    "meteringGridAreaIdentification",
+    "netSettlementGroup",
+    "physicalStatusOfMP",
+    "consumerCategory",
+    "powerLimitKW",
+    "powerLimitKWDecimal",
+    "powerLimitA",
+    "subTypeOfMP",
+    "productionObligation",
+    "mpCapacity",
+    "mpConnectionType",
+    "disconnectionType",
+    "product",
+    "consumerCVR",
+    "dataAccessCVR",
+    "consumerStartDate",
+    "meterReadingOccurrence",
+    "mpReadingCharacteristics",
+    "meterCounterDigits",
+    "meterCounterMultiplyFactor",
+    "meterCounterUnit",
+    "meterCounterType",
+    "taxReduction",
+    "taxSettlementDate",
+    "mpRelationType",
+    "firstConsumerPartyName",
+    "secondConsumerPartyName",
+    "occurrence",
+    "meteringPointAlias",
+    "gridOperatorID",
+    "gridOperatorID_SchemeAgencyIdentifier",
+    "assetType",
+    "mpAddressWashInstructions",
+    "darReference",
+    "streetCode",
+    "streetName",
+    "buildingNumber",
+    "floorId",
+    "roomId",
+    "postcode",
+    "cityName",
+    "citySubDivisionName",
+    "municipalityCode",
+    "locationDescription",
+    "balanceSupplierName",
+    "balanceSupplierId",
+    "balanceSupplierStartDate",
+    "balanceSupplierId_SchemeAgencyIdentifier",
+    "protectedName",
+]
+
+
+def eloverblik_point_id(number: int) -> str:
+    """The 18-digit metering point id `571313100000000000 + number`."""
+    return str(571313100000000000 + number)
+
+
+def eloverblik_point(
+    point_id: str = ELOVERBLIK_POINT_A, **fields: object
+) -> dict[str, Any]:
+    """One `MeteringPointApiDto` as the listing serves it; `fields` override."""
+    point: dict[str, Any] = {
+        "meteringPointId": point_id,
+        "typeOfMP": "E17",
+        "balanceSupplierName": "Test Supplier",
+        "postcode": "1000",
+        "cityName": "Testby",
+        "hasRelation": True,
+        "consumerCVR": None,
+        "dataAccessCVR": None,
+        "childMeteringPoints": [],
+        "streetCode": "0001",
+        "streetName": "Testvej",
+        "buildingNumber": "1",
+        "floorId": "st",
+        "roomId": "tv",
+        "citySubDivisionName": None,
+        "municipalityCode": "101",
+        "locationDescription": None,
+        "settlementMethod": "D01",
+        "meterReadingOccurrence": "PT1H",
+        "firstConsumerPartyName": "Test Person",
+        "secondConsumerPartyName": None,
+        "meterNumber": "12345678",
+        "consumerStartDate": "2020-01-01T00:00:00Z",
+        "isMovedOut": False,
+    }
+    return point | fields
+
+
+def eloverblik_details(
+    point_id: str = ELOVERBLIK_POINT_A, **fields: object
+) -> dict[str, Any]:
+    """One `MeteringPointDetailsCustomerDto`: every spec field, `fields` override."""
+    details: dict[str, Any] = {name: f"{name}-value" for name in _ELO_DETAIL_FIELDS}
+    details |= {
+        "meteringPointId": point_id,
+        "powerLimitKWDecimal": 6.5,
+        "contactAddresses": [{"contactName1": "Test Person", "postcode": "1000"}],
+        "childMeteringPoints": [],
+        "parentMeteringPointId": None,
+        "balanceSupplierStartDate": None,
+    }
+    return details | fields
+
+
+def eloverblik_charge(price_id: str = "SUB1", **fields: object) -> dict[str, Any]:
+    """One subscription or fee as `getcharges` serves it."""
+    charge: dict[str, Any] = {
+        "priceId": price_id,
+        "name": f"Charge {price_id}",
+        "description": f"Description {price_id}",
+        "owner": "5790000000001",
+        "validFromDate": "2025-01-01T00:00:00",
+        "validToDate": None,
+        "periodType": "P1M",
+        "price": 49.5,
+        "quantity": 1,
+    }
+    return charge | fields
+
+
+def eloverblik_tariff(
+    price_id: str = "TAR1", prices: int = 24, **fields: object
+) -> dict[str, Any]:
+    """One tariff, with `prices` positions priced `0.1 * position`."""
+    tariff: dict[str, Any] = {
+        "priceId": price_id,
+        "name": f"Tariff {price_id}",
+        "description": f"Description {price_id}",
+        "owner": "5790000000001",
+        "validFromDate": "2025-01-01T00:00:00",
+        "validToDate": None,
+        "periodType": "PT1H",
+        "prices": [
+            {"position": str(n), "price": round(0.1 * n, 4)}
+            for n in range(1, prices + 1)
+        ],
+    }
+    return tariff | fields
+
+
+def _elo_local_midnight(day: date) -> datetime:
+    return datetime.combine(day, time(0), tzinfo=_COPENHAGEN).astimezone(UTC)
+
+
+def _elo_quantity(instant: datetime) -> str:
+    return f"{(instant.timestamp() / 3600) % 1000:.3f}"
+
+
+class EloverblikService:
+    """A mock Eloverblik Customer API, written from the published spec.
+
+    `/token` trades the refresh token for an access token (`access-1`, `access-2`,
+    ...; `expire_access()` makes every issued one invalid, so the next call is a 401);
+    every other path needs a valid access token (401 ProblemDetails). `/isalive`,
+    the listing, `getdetails`, `getcharges` and `gettimeseries` are served.
+    `gettimeseries` validates as documented (HTTP 400 ProblemDetails carrying
+    `errorCode`: 20013, 30000, 30002-30004, 30008, 30014, 30017; 30001, an invalid
+    period, is the bare JSON string `"#30001: ..."` the real API sends) and then answers one
+    result per requested id with generated CIM data: `dateTo` exclusive, Danish
+    dates, quality `A04`, DST-correct. Quarter and hour data come as one Period per
+    Danish day; day, month and year data as one Period over the whole range.
+
+    Scriptable: `codes[point_id][(date_from, date_to) | None]` answers a point with
+    an error code in that window (`None`: every window); `detail_codes` and
+    `charge_codes` do the same by point; `a02` holds period-start texts with quality
+    `A02` and no quantity; `gaps[point_id]` period-start texts left out;
+    `resolution_override` and `unit_override` change what a point reports;
+    `out_of_order`, `drop_ids`, `repeat_ids` and `extra_ids` bend the result list;
+    `max_days` is the 730-day cap (`None` removes it); `overrides[last path segment]`
+    answers a request in place of the mock. Every response carries an
+    `X-Correlation-ID`; every request is kept in `requests`.
+    """
+
+    def __init__(
+        self,
+        points: list[dict[str, Any]] | None = None,
+        *,
+        refresh_token: str = ELOVERBLIK_REFRESH_TOKEN,
+    ) -> None:
+        """Serve `points` (one default point if omitted) behind `refresh_token`."""
+        self.points = [eloverblik_point()] if points is None else points
+        self.unlinked: list[dict[str, Any]] = []
+        self.refresh_token = refresh_token
+        self.details: dict[str, dict[str, Any]] = {}
+        self.charges: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self.codes: dict[str, dict[tuple[str, str] | None, int]] = {}
+        self.detail_codes: dict[str, int] = {}
+        self.charge_codes: dict[str, int] = {}
+        self.a02: set[str] = set()
+        self.gaps: dict[str, set[str]] = {}
+        self.resolution_override: dict[str, str] = {}
+        self.unit_override: dict[str, str] = {}
+        self.out_of_order = False
+        self.drop_ids: set[str] = set()
+        self.repeat_ids: set[str] = set()
+        self.extra_ids: list[str] = []
+        self.max_days: int | None = 730
+        self.overrides: dict[str, Callable[[httpx.Request], httpx.Response]] = {}
+        self.requests: list[httpx.Request] = []
+        self.token_calls = 0
+        self._valid: set[str] = set()
+
+    @property
+    def point_ids(self) -> list[str]:
+        """The linked point ids, in listing order."""
+        return [p["meteringPointId"] for p in self.points]
+
+    def calls(self, suffix: str) -> list[httpx.Request]:
+        """Every request whose path ends in `suffix`."""
+        return [r for r in self.requests if r.url.path.endswith(suffix)]
+
+    def timeseries_calls(self) -> list[tuple[str, str, str, list[str]]]:
+        """`(dateFrom, dateTo, aggregation, ids)` of every `gettimeseries` request."""
+        found = []
+        for request in self.requests:
+            parts = request.url.path.split("/")
+            if "gettimeseries" in parts:
+                at = parts.index("gettimeseries")
+                ids = json.loads(request.content)["meteringPoints"]["meteringPoint"]
+                found.append((parts[at + 1], parts[at + 2], parts[at + 3], ids))
+        return found
+
+    def expire_access(self) -> None:
+        """Invalidate every access token issued so far."""
+        self._valid.clear()
+
+    def client(
+        self,
+        refresh_token: str | None = ELOVERBLIK_REFRESH_TOKEN,
+        *,
+        policy: RetryPolicy | None = None,
+        max_concurrency: int = 2,
+    ) -> "EloverblikClient":
+        """A real client wired to this mock, with instant retries by default."""
+        from energydata.eloverblik import EloverblikClient
+
+        return EloverblikClient(
+            refresh_token,
+            policy=policy or RetryPolicy(base_delay=0.0, max_delay=0.0),
+            max_concurrency=max_concurrency,
+            transport=httpx.MockTransport(self),
+        )
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Answer one request."""
+        self.requests.append(request)
+        response = self._answer(request)
+        response.headers["X-Correlation-ID"] = str(
+            uuid.UUID(int=len(self.requests), version=4)
+        )
+        return response
+
+    @staticmethod
+    def _problem(status: int, title: str, **extra: object) -> httpx.Response:
+        body = {"type": "about:blank", "title": title, "status": status} | extra
+        return httpx.Response(status, json=body)
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.rstrip("/")
+        tail = path.split("/customerapi/api", 1)[-1]
+        override = self.overrides.get(path.rsplit("/", 1)[-1])
+        if override is not None:
+            return override(request)
+        auth = request.headers.get("Authorization", "")
+        if tail == "/token":
+            if request.method != "GET":
+                return self._problem(405, "Method Not Allowed")
+            if auth != f"Bearer {self.refresh_token}":
+                return self._problem(401, "Unauthorized", detail="Bad refresh token.")
+            self.token_calls += 1
+            access = f"access-{self.token_calls}"
+            self._valid.add(access)
+            return httpx.Response(200, json={"result": access})
+        if tail == "/isalive":
+            return httpx.Response(200, json=True)
+        if not auth.startswith("Bearer ") or auth[7:] not in self._valid:
+            return self._problem(401, "Unauthorized")
+        if tail == "/meteringpoints/meteringpoints" and request.method == "GET":
+            include = request.url.params.get("includeAll", "false").lower() == "true"
+            rows = self.points + (self.unlinked if include else [])
+            return httpx.Response(200, json={"result": rows})
+        if request.method != "POST":
+            return self._problem(405, "Method Not Allowed")
+        try:
+            ids = json.loads(request.content)["meteringPoints"]["meteringPoint"]
+            assert isinstance(ids, list)
+        except (ValueError, KeyError, TypeError, AssertionError):
+            return self._problem(400, "Bad Request", errorCode=20013)
+        if not ids:
+            return self._problem(400, "Bad Request", errorCode=20013)
+        if tail == "/meteringpoints/meteringpoint/getdetails":
+            return self._details(ids)
+        if tail == "/meteringpoints/meteringpoint/getcharges":
+            return self._charges(ids)
+        if tail.startswith("/meterdata/gettimeseries/"):
+            return self._timeseries(tail.split("/")[3:], ids)
+        return self._problem(404, "Not Found")
+
+    @staticmethod
+    def _failure(point_id: str, code: int, key: str, empty: object) -> dict[str, Any]:
+        text = {20008: "Metering point not found", 20003: "Invalid metering point id"}
+        return {
+            "success": False,
+            "errorCode": code,
+            "errorText": text.get(code, f"Error {code}"),
+            "id": point_id,
+            "stackTrace": None,
+            key: empty,
+        }
+
+    def _known(self, point_id: str) -> int | None:
+        if not re.fullmatch(r"\d{18}", point_id):
+            return 20003
+        return None if point_id in self.point_ids else 20008
+
+    def _details(self, ids: list[str]) -> httpx.Response:
+        results: list[dict[str, Any]] = []
+        for point_id in ids:
+            code = self.detail_codes.get(point_id) or self._known(point_id)
+            if code:
+                results.append(self._failure(point_id, code, "result", None))
+                continue
+            body = self.details.get(point_id, eloverblik_details(point_id))
+            results.append(
+                {
+                    "success": True,
+                    "errorCode": 10000,
+                    "errorText": "OK",
+                    "id": point_id,
+                    "stackTrace": None,
+                    "result": body,
+                }
+            )
+        return httpx.Response(200, json={"result": results})
+
+    def _charges(self, ids: list[str]) -> httpx.Response:
+        results: list[dict[str, Any]] = []
+        for point_id in ids:
+            code = self.charge_codes.get(point_id) or self._known(point_id)
+            if code:
+                results.append(self._failure(point_id, code, "result", None))
+                continue
+            found = self.charges.get(point_id) or {
+                "subscriptions": [eloverblik_charge("SUB1")],
+                "tariffs": [eloverblik_tariff("TAR1")],
+                "fees": [eloverblik_charge("FEE1", periodType="P1D", price=0.25)],
+            }
+            results.append(
+                {
+                    "success": True,
+                    "errorCode": 10000,
+                    "errorText": "OK",
+                    "id": point_id,
+                    "stackTrace": None,
+                    "result": {"meteringPointId": point_id, **found},
+                }
+            )
+        return httpx.Response(200, json={"result": results})
+
+    def _timeseries(self, parts: list[str], ids: list[str]) -> httpx.Response:
+        date_from, date_to, aggregation = parts
+        problem = self._problem
+        try:
+            for text in (date_from, date_to):
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+                    raise ValueError(text)
+            first, last = date.fromisoformat(date_from), date.fromisoformat(date_to)
+        except ValueError:
+            return problem(400, "Bad Request", errorCode=30004)
+        if aggregation not in _ELO_RESOLUTION:
+            return problem(400, "Bad Request", errorCode=30008)
+        today = pd.Timestamp.now("Europe/Copenhagen").date()
+        horizon = date(today.year - 5, 1, 1)
+        too_long = self.max_days is not None and (last - first).days > self.max_days
+        for failed, code in (
+            (first > today, 30000),
+            (first > last, 30001),
+            (first == last, 30002),
+            (last > today + timedelta(days=1), 30003),
+            (too_long, 30014),
+            (last <= horizon, 30017),
+        ):
+            if failed and code == 30001:
+                # The real API answers this one with a bare JSON string.
+                return httpx.Response(
+                    400, json="#30001: Period not allowed, ToDate is before FromDate."
+                )
+            if failed:
+                return problem(400, "Bad Request", errorCode=code)
+        results = [self._series(i, first, last, aggregation) for i in ids]
+        if self.out_of_order:
+            results.reverse()
+        results = [r for r in results if r["id"] not in self.drop_ids]
+        results += [r for r in results if r["id"] in self.repeat_ids]
+        for extra in self.extra_ids:
+            results.append(self._series(extra, first, last, aggregation))
+        return httpx.Response(200, json={"result": results})
+
+    def _series(
+        self, point_id: str, first: date, last: date, aggregation: str
+    ) -> dict[str, Any]:
+        scripted = self.codes.get(point_id, {})
+        code = scripted.get((first.isoformat(), last.isoformat())) or scripted.get(None)
+        code = code or self._known(point_id)
+        if code:
+            return self._failure(
+                point_id, code, "MyEnergyData_MarketDocument", {"TimeSeries": None}
+            )
+        resolution = _ELO_RESOLUTION[aggregation]
+        periods = []
+        for begin, end, count in self._spans(first, last, aggregation):
+            points = []
+            for position in range(1, count + 1):
+                instant = self._at(begin, aggregation, position - 1)
+                text = instant.strftime(_ELO_TIME)
+                if text in self.gaps.get(point_id, set()):
+                    continue
+                point: dict[str, Any] = {"position": str(position)}
+                if text in self.a02:
+                    point["out_Quantity.quality"] = "A02"
+                else:
+                    point["out_Quantity.quantity"] = _elo_quantity(instant)
+                    point["out_Quantity.quality"] = "A04"
+                points.append(point)
+            periods.append(
+                {
+                    "resolution": self.resolution_override.get(point_id, resolution),
+                    "timeInterval": {
+                        "start": begin.strftime(_ELO_TIME),
+                        "end": end.strftime(_ELO_TIME),
+                    },
+                    "Point": points,
+                }
+            )
+        series = {
+            "mRID": point_id,
+            "businessType": "A04",
+            "curveType": "A01",
+            "measurement_Unit.name": self.unit_override.get(point_id, "KWH"),
+            "MarketEvaluationPoint": {
+                "mRID": {"codingScheme": "A10", "name": point_id}
+            },
+            "Period": periods,
+        }
+        document = {
+            "mRID": "doc",
+            "createdDateTime": "2026-11-02T00:00:00Z",
+            "sender_MarketParticipant.name": "Energinet",
+            "sender_MarketParticipant.mRID": {
+                "codingScheme": "A10",
+                "name": "5790001330583",
+            },
+            "period.timeInterval": {
+                "start": _elo_local_midnight(first).strftime(_ELO_TIME),
+                "end": _elo_local_midnight(last).strftime(_ELO_TIME),
+            },
+            "TimeSeries": [series],
+        }
+        return {
+            "success": True,
+            "errorCode": 10000,
+            "errorText": "OK",
+            "id": point_id,
+            "stackTrace": None,
+            "MyEnergyData_MarketDocument": document,
+        }
+
+    @staticmethod
+    def _spans(
+        first: date, last: date, aggregation: str
+    ) -> list[tuple[datetime, datetime, int]]:
+        """`(period start, period end, point count)` in UTC for `[first, last)`."""
+        if aggregation in ("Quarter", "Hour"):
+            per_hour = 4 if aggregation == "Quarter" else 1
+            spans = []
+            day = first
+            while day < last:
+                begin = _elo_local_midnight(day)
+                end = _elo_local_midnight(day + timedelta(days=1))
+                hours = round((end - begin).total_seconds() / 3600)
+                spans.append((begin, end, hours * per_hour))
+                day += timedelta(days=1)
+            return spans
+        if aggregation == "Day":
+            return [
+                (
+                    _elo_local_midnight(first),
+                    _elo_local_midnight(last),
+                    (last - first).days,
+                )
+            ]
+        if aggregation == "Month":
+            months = (last.year - first.year) * 12 + last.month - first.month
+            count = months + (1 if last.day > 1 else 0)
+            start = first.replace(day=1)
+            index = start.month - 1 + count
+            stop = date(start.year + index // 12, index % 12 + 1, 1)
+            return [(_elo_local_midnight(start), _elo_local_midnight(stop), count)]
+        count = last.year - first.year + (1 if (last.month, last.day) > (1, 1) else 0)
+        year_start = date(first.year, 1, 1)
+        year_stop = date(year_start.year + count, 1, 1)
+        return [
+            (_elo_local_midnight(year_start), _elo_local_midnight(year_stop), count)
+        ]
+
+    @staticmethod
+    def _at(begin: datetime, aggregation: str, offset: int) -> datetime:
+        """The UTC start of the `offset`th interval of a period starting at `begin`."""
+        if aggregation == "Quarter":
+            return begin + timedelta(minutes=15 * offset)
+        if aggregation == "Hour":
+            return begin + timedelta(hours=offset)
+        day = begin.astimezone(_COPENHAGEN).date()
+        if aggregation == "Day":
+            day += timedelta(days=offset)
+        elif aggregation == "Month":
+            index = day.month - 1 + offset
+            day = date(day.year + index // 12, index % 12 + 1, 1)
+        else:
+            day = date(day.year + offset, 1, 1)
+        return _elo_local_midnight(day)
+
+
+@pytest.fixture
+def eloverblik_service() -> EloverblikService:
+    """A mock Eloverblik API with one linked point and generated data."""
+    return EloverblikService()

@@ -42,13 +42,14 @@ src/                    everything installable; nothing outside it is packaged
     utils/              shared utilities: API client base, retrying requests, body readers, date-range chunking, periods, zones, frames
     energidataservice/  Energi Data Service: client, day-ahead, balancing and reserve market prices, tariffs and tax
     minstroem/          Min Strøm Consumer API: client, addresses, consumption, solar export, costs, prices and price forecast
-tests/                  pytest suite, one test_<module>.py per module, prefixed test_<subpackage>_ where a name would collide (test_minstroem_*.py); fixtures/ holds recorded payloads and the Min Strøm OpenAPI spec
+    eloverblik/         Eloverblik Customer API: client, metering points and details, meter data, charges
+tests/                  pytest suite, one test_<module>.py per module, prefixed test_<subpackage>_ where a name would collide (test_minstroem_*.py, test_eloverblik_*.py); fixtures/ holds recorded payloads and the Min Strøm and Eloverblik OpenAPI specs
 development/            one folder per branch, one file per round: the pipeline's state
 .claude/                Claude Code configuration: rules, skills, agents, hooks
 .vscode/                editor config (Ruff as formatter, format on save)
 pyproject.toml          packaging, Ruff, mypy and pytest configuration
 DEVELOPMENT.md          development-side open questions and things to fix later (see CLAUDE.md)
-README.md               human guide: install, every source's endpoints and columns, the live Min Strøm test command, development setup
+README.md               human guide: install, every source's endpoints and columns, the live Min Strøm and Eloverblik test commands, development setup
 CLAUDE.md               routing map for Claude
 STRUCTURE.md            this file
 ```
@@ -61,7 +62,7 @@ this subpackage. Modules: `src/energydata/utils/__init__.py` (re-exports every p
 `src/energydata/utils/retry.py` (retrying sync/async request wrappers),
 `src/energydata/utils/readers.py` (JSON/XML/CSV/ZIP body readers),
 `src/energydata/utils/chunking.py` (date-range windows, chunked and concurrent chunked
-fetch), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
+fetch, ordered concurrent gather), `src/energydata/utils/api_client.py` (`ApiClient`, the source-agnostic client base
 with its own event loop), `src/energydata/utils/periods.py` (`start`/`end` resolution),
 `src/energydata/utils/zones.py` (bidding-zone normalisation) and
 `src/energydata/utils/frames.py` (period index, block index, wide pivot, resolution expansion, NaN
@@ -114,6 +115,27 @@ offline against the mock in nine scenarios of data, refusing real transports fro
 `tests/test_minstroem_costs.py`, `tests/test_minstroem_prices.py`, `tests/test_minstroem_spec.py`
 (which also runs the live suite through that plugin) and `tests/test_minstroem_live.py` (marked
 `live`, skipped without a key, deselected by plain `pytest`).
+
+## Subpackage: `src/energydata/eloverblik/`
+
+The Eloverblik Customer API on top of `utils`; needs a refresh token
+(`ELOVERBLIK_REFRESH_TOKEN`). Detail lives in `.claude/rules/structure-eloverblik.md`, loaded
+when working in this subpackage. Modules: `src/energydata/eloverblik/__init__.py` (re-exports
+the public names), `src/energydata/eloverblik/client.py` (`EloverblikClient`, `EloverblikError`,
+`MissingTokenError`, `BASE_URL`, `REFRESH_TOKEN_ENV`, `DEFAULT_POLICY`),
+`src/energydata/eloverblik/_common.py` (private shared path of the point-scoped functions),
+`src/energydata/eloverblik/meteringpoints.py` (`get_metering_points`,
+`get_metering_point_details`), `src/energydata/eloverblik/meterdata.py` (`Aggregation`,
+`AGGREGATIONS`, `get_meter_data`) and `src/energydata/eloverblik/charges.py` (`get_charges`).
+Tests: `tests/conftest.py` (also the `EloverblikService` mock, its builders and the
+`eloverblik_service` fixture), `tests/fixtures/eloverblik_openapi.json` (the published OpenAPI
+spec), `tests/test_eloverblik_live.py` (marked `live`, skipped without a token, deselected by
+plain `pytest`, runnable offline with `ELOVERBLIK_LIVE_MOCK=1`), and the offline suites
+`tests/test_eloverblik_client.py`, `tests/test_eloverblik_common.py`,
+`tests/test_eloverblik_meteringpoints.py`, `tests/test_eloverblik_meterdata.py`,
+`tests/test_eloverblik_charges.py` and `tests/test_eloverblik_spec.py`. The `ApiClient.request`
+headers/json, `ApiClient.request_response` and `gather_ordered` changes are covered in `tests/test_api_client.py` and
+`tests/test_chunking.py`.
 
 ## Package: `src/energydata/`
 
@@ -222,7 +244,7 @@ session resumes from, and what `/create-pr` builds the pull request body from.
 | — | Every skill pins `model` and `effort` in its frontmatter; the table in `CLAUDE.md` says which and why |
 | `skills/build/` | `/build` — steps 3 to 7 as one unattended block, with `models.md` holding the per-step model and effort table and its rationale: a subagent per step on its pinned model, the step's readers (`structure-auditor`, `test-designer`) run by the orchestrator and handed over in the brief, work-in-progress commits, commit and push after each, halting rules, trace relay, resume from the marker or an interrupted run |
 | `rules/python.md` | Coding conventions, auto-loaded for `**/*.py` |
-| `rules/structure-utils.md`, `rules/structure-energidataservice.md`, `rules/structure-minstroem.md` | Per-subpackage signature detail split out of this file (see Growth), each loaded by its `paths` frontmatter when Claude works in that subpackage or its tests |
+| `rules/structure-utils.md`, `rules/structure-energidataservice.md`, `rules/structure-minstroem.md`, `rules/structure-eloverblik.md` | Per-subpackage signature detail split out of this file (see Growth), each loaded by its `paths` frontmatter when Claude works in that subpackage or its tests |
 | `skills/repo-setup/` | `/repo-setup` — one-time setup of a repo made from this template; carries `main_protect.solo.json` and `main_protect.collab.json` |
 | `skills/feature/` | `/feature` — starts or resumes the pipeline |
 | `skills/fix/` | `/fix` — starts the pipeline from a defect: reproduces, finds the root cause, sizes the class, has the diagnosis criticised, decides whether it is a bug at all, then hands to `/conceptualize` as a fix round |

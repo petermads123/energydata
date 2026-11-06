@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from energydata.utils.chunking import _gather_ordered
+from energydata.utils.chunking import gather_ordered
 from energydata.utils.frames import (
     conform,
     expand_to_resolution,
@@ -163,7 +163,7 @@ async def _fetch_sides(
         calls.append(lambda: hourly(hourly_period))
     if quarter_period is not None:
         calls.append(lambda: quarter(quarter_period))
-    results = iter(await _gather_ordered(calls))
+    results = iter(await gather_ordered(calls))
     hourly_records = next(results) if hourly_period is not None else []
     quarter_records = next(results) if quarter_period is not None else []
     return hourly_records, quarter_records

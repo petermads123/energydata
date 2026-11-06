@@ -25,18 +25,15 @@ by heading is updated in the same change.
   once two subpackages have a module of the same name (e.g. two `client.py`); decide on
   `tests/<subpackage>/` with `__init__.py` files before the second source subpackage lands.
   The first (`energidataservice`) sidestepped it with `test_energidataservice_client.py`, and
-  the second (`minstroem`) with the `test_minstroem_*.py` prefix; still open.
+  the second (`minstroem`) with the `test_minstroem_*.py` prefix, and the third (`eloverblik`) with `test_eloverblik_*.py`; still open.
 - **`read_json` accepts `NaN` and `Infinity`.** Stdlib leniency, pinned by a test; revisit
   if a source ever returns them and a caller needs them refused.
 
 ## `feat/energidataservice-client` round 1 (2026-10-06)
 
-- **`_gather_ordered` is imported across modules.** `energidataservice/day_ahead.py` uses the
-  private helper from `utils/chunking.py` for the lowest-index re-raise rule, and so does
-  `minstroem/_series.py` — the second caller is here; make it public (with a
-  `structure-utils.md` row). It also re-raises `from group_error`, so on windowed Min Strøm
-  paths `MinStroemError.__cause__` is the `ExceptionGroup`, not the httpx error (status,
-  code, reason and request id survive).
+- **`gather_ordered` re-raises `from group_error`**, so on windowed paths the exception's
+  `__cause__` is the `ExceptionGroup`, not the httpx error (status, code, reason and request
+  id survive on the mapped error).
 
 ## `feat/energidataservice-markets` round 1 (2026-10-06)
 
@@ -66,3 +63,16 @@ by heading is updated in the same change.
   needs a case-insensitive compare.
 - **A failing `/me/addresses` floods the live output.** A bad, expired or no-Plus key gives 17
   identical `ERROR at setup` tracebacks; the first lines carry the facts, the paste is long.
+
+## `feat/eloverblik-customer-api` round 1 (2026-11-02)
+
+- **Calendar helpers are duplicated across `minstroem/_series.py` and `eloverblik/meterdata.py`.**
+  Period alignment, the Copenhagen-calendar interval index and the calendar window split exist
+  twice (private, near-identical). Promote them to `utils` and migrate `minstroem` in a
+  refactor round once a third caller or a defect makes it worth touching a shipped subpackage.
+- **The real 400's code and text are confirmed offline only (2026-11-04).** The second live run
+  showed the bare string body `"#30001: ..."`; `_api_error` now reads it, tested against the mock.
+  The next real-token run's `test_error_body_of_an_invalid_request` line should read `code=30001`.
+- **One unidentified full-suite failure at step 7 (2026-11-04).** A single `pytest` failure was lost
+  in the `tests/test_readers.py` error output and did not recur in two further runs. Those errors
+  are fixed (step 9), so a recurrence will now be readable; identify it if it comes back.

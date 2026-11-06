@@ -105,7 +105,7 @@ async def async_fetch_chunked[T](
     return results
 
 
-async def _gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
+async def gather_ordered[T](calls: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
     """Run `calls` concurrently and return their results in call order.
 
     The first failure cancels the calls still running. The exception raised is
@@ -183,7 +183,7 @@ async def gather_chunked[T](
 
         return call
 
-    return await _gather_ordered([bind(lo, hi) for lo, hi in windows])
+    return await gather_ordered([bind(lo, hi) for lo, hi in windows])
 
 
 def main() -> None:

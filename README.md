@@ -166,6 +166,65 @@ key or the address) followed by one line per test; paste that back. Optionally s
 address text whatever `--tb` style you use, but `-l` / `--showlocals` prints every local variable,
 the addresses included, so do not add it before pasting.
 
+### Eloverblik
+
+The [Eloverblik Customer API](https://eloverblik.dk/) serves your own **measured consumption
+(and production)** per metering point, quarter-hourly up to yearly for the previous five years
+plus the current one, together with the metering points, their master data and the charges
+(subscriptions, tariffs, fees) linked to them. Create a token in the Eloverblik portal
+(*Datadeling*, then *Opret token*), pass it as `refresh_token=` to `EloverblikClient` or set the
+`ELOVERBLIK_REFRESH_TOKEN` environment variable; everything imports and constructs without one,
+and the first request raises `MissingTokenError`. The client trades the refresh token for a
+24-hour access token on its first request and reuses it; a 401 refreshes once and retries once.
+`/token` allows **two calls a minute**, so pass one `client=` to several calls instead of letting
+each create its own. Neither token appears in an exception message or a `repr`. Points are
+requested at most 10 at a time; 429 and 503 are retried with backoff. Only the Customer API is
+covered, not the Third-Party API, and nothing that writes.
+
+```python
+from energydata.eloverblik import EloverblikClient, get_meter_data, get_metering_points
+
+with EloverblikClient() as client:
+    points = get_metering_points(client=client)
+    usage = get_meter_data("2026-10-01", "2026-11-01", aggregation="day", client=client)
+print(usage.xs("energy_kwh", axis=1, level="field"))
+```
+
+`get_meter_data` returns a frame indexed by interval start (tz-aware `Europe/Copenhagen`, named
+`time`) with two-level columns `(metering_point_id, field)`: `energy_kwh` (kWh, `float64`) and
+`quality` (the raw code, such as `A04` measured; `A02` is "not available", with no quantity).
+With `end` there is one row per interval of `[start, end)` on the Danish calendar (23 or 25
+hours on a DST day); an interval the API did not return is **NaN**, never zero. Without `end` the
+frame runs to the last interval returned. A bound not on the aggregation (for example
+`aggregation="month"` starting mid-month) is a `ValueError`. **The interval holding today may be
+incomplete**: it is a partial sum. Periods over 730 days are split on Danish calendar dates and
+joined again. A point with no data, outside its data period, not covered by your authorization
+or with an expired relation is NaN for the window concerned. An API error raises
+`EloverblikError` carrying `status`, `error_code`, `error_text`, `metering_point_id` and
+`correlation_id`.
+
+| Function | Unit | Interval | Columns | Endpoint |
+|---|---|---|---|---|
+| `get_meter_data(start, end=None, *, aggregation="hour", metering_point_ids=None)` | kWh | `quarter`, `hour`, `day`, `month`, `year` | per point `energy_kwh`, `quality` | `POST /meterdata/gettimeseries/{from}/{to}/{aggregation}` |
+| `get_metering_points(*, include_unlinked=False)` | | one row per point | `metering_point_id`, `type_of_mp`, `settlement_method`, `meter_reading_occurrence`, `balance_supplier_name`, address fields, `has_relation`, `is_moved_out`, `child_metering_point_ids` | `GET /meteringpoints/meteringpoints` |
+| `get_metering_point_details(metering_point_ids=None)` | | one row per point | every scalar master-data field, snake_case (`type_of_mp`, `power_limit_kw_decimal`, ...) | `POST /meteringpoints/meteringpoint/getdetails` |
+| `get_charges(metering_point_ids=None)` | DKK | one row per charge and price position | `metering_point_id`, `kind` (`subscription`, `tariff`, `fee`), `price_id`, `name`, `description`, `owner`, `period_type`, `valid_from`, `valid_to`, `price`, `quantity`, `position` | `POST /meteringpoints/meteringpoint/getcharges` |
+
+`metering_point_ids` is one 18-digit id or a sequence of them; `None` means every linked point.
+Consumer names and CPR/CVR numbers are deliberately left out of the point listing.
+
+The live tests are marked `live`, are skipped without a token and are deselected by plain
+`pytest`. Run them from the repo root in PowerShell (the token goes inline; the last command
+removes it from the session):
+
+```powershell
+$env:ELOVERBLIK_REFRESH_TOKEN='<din-token>'; $env:ELOVERBLIK_LIVE_REPORT="$env:TEMP\eloverblik_report.txt"; .venv\Scripts\python.exe -m pytest tests/test_eloverblik_live.py -m live -rA --tb=short -p no:cacheprovider; Get-Content $env:ELOVERBLIK_LIVE_REPORT; Remove-Item Env:ELOVERBLIK_REFRESH_TOKEN
+```
+
+The report holds metering point ids only as `...` plus their last four digits, never a name,
+an address, a CPR/CVR number or a token. `-l` / `--showlocals` prints every local variable, so do
+not add it before pasting the output anywhere.
+
 ## Layout
 
 This repo was created from a template and set up with `/repo-setup`.

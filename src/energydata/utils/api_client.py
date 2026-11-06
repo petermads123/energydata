@@ -92,6 +92,8 @@ class ApiClient:
         *,
         params: Mapping[str, str | int | float] | None = None,
         fmt: Format | None = None,
+        headers: Mapping[str, str] | None = None,
+        json: object = None,
     ) -> Parsed:
         """Send one request on the client's loop and parse the body.
 
@@ -104,6 +106,8 @@ class ApiClient:
             path: Appended to `base_url`.
             params: Query parameters.
             fmt: The body format. `None` picks it from the `Content-Type`.
+            headers: Headers for this request only, merged over the client's.
+            json: A JSON-serialisable request body.
 
         Returns:
             The parsed body.
@@ -115,13 +119,54 @@ class ApiClient:
             httpx.HTTPStatusError: As for `async_request_with_retry`.
             ParseError: If the body cannot be parsed.
         """
+        response = await self.request_response(
+            method, path, params=params, headers=headers, json=json
+        )
+        return read_response(response, fmt)
+
+    async def request_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, str | int | float] | None = None,
+        headers: Mapping[str, str] | None = None,
+        json: object = None,
+    ) -> httpx.Response:
+        """Send one request on the client's loop and return the unparsed response.
+
+        Behaves exactly as `request` (concurrency cap, retries, exceptions) except
+        that nothing is parsed, so the caller can read the status and headers.
+        Like `request`, it may only be awaited from inside `run`.
+
+        Args:
+            method: The HTTP method.
+            path: Appended to `base_url`.
+            params: Query parameters.
+            headers: Headers for this request only, merged over the client's.
+            json: A JSON-serialisable request body.
+
+        Returns:
+            The response, whose body has been read.
+
+        Raises:
+            RuntimeError: If awaited on any loop other than the client's.
+            RetriesExhaustedError: As for `async_request_with_retry`.
+            HoldoffTooLongError: As for `async_request_with_retry`.
+            httpx.HTTPStatusError: As for `async_request_with_retry`.
+        """
         http, semaphore = self._on_own_loop()
         url = f"{self._base_url.rstrip('/')}/{path.lstrip('/')}"
         async with semaphore:
-            response = await async_request_with_retry(
-                method, url, client=http, policy=self._policy, params=params
+            return await async_request_with_retry(
+                method,
+                url,
+                client=http,
+                policy=self._policy,
+                params=params,
+                headers=headers,
+                json=json,
             )
-        return read_response(response, fmt)
 
     def run[T](self, work: Callable[[], Awaitable[T]]) -> T:
         """Run `work()` on the client's loop and block until it finishes.
