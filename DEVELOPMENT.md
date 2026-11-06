@@ -74,5 +74,5 @@ by heading is updated in the same change.
   showed the bare string body `"#30001: ..."`; `_api_error` now reads it, tested against the mock.
   The next real-token run's `test_error_body_of_an_invalid_request` line should read `code=30001`.
 - **One unidentified full-suite failure at step 7 (2026-11-04).** A single `pytest` failure was lost
-  in the `tests/test_readers.py` error output and did not recur in two further runs. Fixing the
-  Windows-only readers errors would make such a failure readable; watch for it until then.
+  in the `tests/test_readers.py` error output and did not recur in two further runs. Those errors
+  are fixed (step 9), so a recurrence will now be readable; identify it if it comes back.

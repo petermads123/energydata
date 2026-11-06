@@ -68,8 +68,9 @@ def test_read_json_parses_valid_documents(data: bytes, expected: object) -> None
         b'{"a": 1,}',
         b"\xff",
         b'"\xff"',
-        b"[" * 100_000 + b"]" * 100_000,  # recursion limit
-        b"1" * 5000,  # integer digit limit
+        # Named: an id built from these values overflows PYTEST_CURRENT_TEST on Windows.
+        pytest.param(b"[" * 100_000 + b"]" * 100_000, id="recursion-limit"),
+        pytest.param(b"1" * 5000, id="integer-digit-limit"),
     ],
 )
 def test_read_json_raises_a_parse_error_naming_json(data: bytes) -> None:
