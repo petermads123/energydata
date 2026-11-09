@@ -109,7 +109,7 @@ The only pandas-using module besides `periods.py`. Every frame it builds has a
 
 ## Tests
 
-One suite per module, written at step 5. No test touches the network.
+One suite per module, written in the round's test step. No test touches the network.
 
 - `tests/test_retry.py` — every public name, driven through `httpx.MockTransport`
   with an injected `sleep`. The autouse fixture in `tests/conftest.py` patches the real httpx transports to

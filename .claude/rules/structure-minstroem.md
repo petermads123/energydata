@@ -76,7 +76,7 @@ costs hour/day 365 days, month 12 months, year 1 year; prices hour 365 days, qua
 
 ## Tests
 
-Written at step 5, none touching the network (about 900 tests): `tests/test_minstroem_client.py`,
+Written in the round's test step, none touching the network (about 900 tests): `tests/test_minstroem_client.py`,
 `tests/test_minstroem_series.py`, `tests/test_minstroem_addresses.py`,
 `tests/test_minstroem_usage.py`, `tests/test_minstroem_costs.py`,
 `tests/test_minstroem_prices.py` and `tests/test_minstroem_spec.py` (the contract test against
