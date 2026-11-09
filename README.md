@@ -6,7 +6,7 @@ APIs for collecting energy data from four sources: Energinet's
 [Eloverblik](https://eloverblik.dk/) and the
 [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/).
 
-**Version:** 2.0.1
+**Version:** 2.0.2
 
 ## Install as a dependency
 
