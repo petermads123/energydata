@@ -2264,10 +2264,10 @@ def test_the_minstroem_rules_file_names_every_public_function_and_module() -> No
     assert "tests/minstroem_live_mock.py" in RULES
 
 
-def test_the_stop_gates_structure_check_reports_nothing_for_this_subpackage() -> None:
-    import stop_gate
+def test_check_syncs_structure_check_reports_nothing_for_this_subpackage() -> None:
+    import check_sync
 
-    problems = stop_gate.structure_problems(REPO)
+    problems = check_sync.structure_problems(REPO)
 
     assert [p for p in problems if "minstroem" in p] == []
 

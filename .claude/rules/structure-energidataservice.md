@@ -106,7 +106,7 @@ Module constants: `DATASET`, `ENERGINET_GLN`, `TARIFF` (`"D03"`) and `SUBSCRIPTI
 
 ## Tests
 
-Written at step 5, none touching the network: `tests/test_energidataservice_client.py`
+Written in the round's test step, none touching the network: `tests/test_energidataservice_client.py`
 (including the `max_span` override), `tests/test_day_ahead.py`, `tests/test_balancing.py`,
 `tests/test_reserves.py`, `tests/test_pricelist.py` and `tests/test_dsos.py`, all on
 `httpx.MockTransport`; the market suites run on the real records in
