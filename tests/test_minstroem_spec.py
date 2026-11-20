@@ -2279,4 +2279,4 @@ def test_the_pyproject_registers_the_live_marker_and_deselects_it_by_default() -
         'markers = ["live: calls a real API; needs MINSTROEM_API_KEY (Min Strøm) '
         'or ELOVERBLIK_REFRESH_TOKEN (Eloverblik)"]'
     ) in text
-    assert "addopts = \"-v -m 'not live'\"" in text
+    assert "addopts = \"-v -m 'not live' -p pytest_progress\"" in text
